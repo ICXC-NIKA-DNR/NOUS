@@ -212,11 +212,78 @@ body {
   border-color: var(--text-dim);
 }
 
+/* ---------------- sliders ---------------- */
+
+.slider-block {
+  padding: 8px 4px 2px 22px;
+}
+
+.slider-range {
+  width: 100%;
+  accent-color: var(--accent);
+}
+
+.slider-meta {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.slider-field {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-dim);
+  font-size: 11.5px;
+}
+
+.slider-field input {
+  width: 56px;
+  background: var(--bg-input);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font: inherit;
+  padding: 2px 5px;
+}
+
+/* ---------------- perf HUD (dev, ?perf=N) ---------------- */
+
+.perf-hud {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  background: rgba(27, 29, 33, 0.88);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-size: 12px;
+}
+
+.perf-hud .perf-line {
+  margin: 0 0 6px;
+  font-family: monospace;
+  color: var(--curve-3);
+  white-space: pre;
+}
+
+.perf-hud button {
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  padding: 3px 8px;
+  cursor: pointer;
+}
+
 /* ---------------- graph ---------------- */
 
 .canvas-area {
   flex: 1;
   min-width: 0;
+  position: relative; /* anchors .perf-hud */
 }
 
 .graph-container {
@@ -228,11 +295,21 @@ body {
 
 .graph-canvas {
   display: block;
+  position: absolute;
+  top: 0;
+  left: 0;
+}
+
+.graph-grid-layer {
+  pointer-events: none;
+}
+
+.graph-curves-layer {
   touch-action: none; /* pointer events handle pan/pinch themselves */
   cursor: grab;
 }
 
-.graph-canvas:active {
+.graph-curves-layer:active {
   cursor: grabbing;
 }
 

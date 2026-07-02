@@ -1,20 +1,41 @@
 // Adapter between raw sidebar input and the core. Parses a line, classifies
-// what it means for M2 (explicit y = f(x) plot, bare f(x) plot, constant
-// value, or not-yet-supported), and builds the evaluation closure the plot
-// layer samples. Core stays DOM-free; this file stays React-free.
+// it (explicit y = f(x) plot, slider definition, constant value, or
+// not-yet-supported), and compiles the evaluation closure the plot layer
+// samples. Core stays DOM-free; this file stays React-free.
+//
+// Plot closures go through core/compile.ts (the hot path); one-off values
+// use the recursive evaluator (the cold path).
 
 import type { Expr, Relation, Restriction } from '../core/ast.ts';
+import { compile, type Env } from '../core/compile.ts';
 import { GcalcError, type Diagnostic, type Edit } from '../core/errors.ts';
 import { evaluate, makeContext, type AngleMode } from '../core/evaluator.ts';
-import { CONSTANTS } from '../core/names.ts';
+import { CONSTANTS, FUNCTION_NAMES } from '../core/names.ts';
 import { parse } from '../core/parser.ts';
 
 export type Analysis =
   | { kind: 'empty' }
   | { kind: 'error'; diagnostic: Diagnostic }
-  | { kind: 'plot'; ast: Expr; f: (x: number) => number }
+  | {
+      kind: 'plot';
+      ast: Expr;
+      /** Sampled by the plot loop; env.x is set per sample. */
+      f: (x: number, env: Env) => number;
+      /** Defined names this curve reads — the dirty-tracking key. */
+      deps: readonly string[];
+    }
   | { kind: 'value'; ast: Expr; value: number }
+  | {
+      kind: 'definition';
+      ast: Expr;
+      /** Slider name (lhs). */
+      name: string;
+      /** Current value (rhs evaluated; rhs must be closed). */
+      value: number;
+    }
   | { kind: 'unsupported'; ast: Expr; reason: string };
+
+const RESERVED = new Set(['x', 'y', ...FUNCTION_NAMES]);
 
 /** Free variables: identifiers that are neither constants nor call targets. */
 export function freeVars(node: Expr, out = new Set<string>()): Set<string> {
@@ -66,21 +87,25 @@ function explicitBody(rel: Relation): Expr | null {
   return null;
 }
 
-function makeF(body: Expr, angleMode: AngleMode): (x: number) => number {
-  // One mutable env shared across samples; M3 replaces this with compile().
-  const vars = new Map<string, number>([['x', 0]]);
-  const ctx = makeContext({ angleMode, variables: vars });
-  return (x: number): number => {
-    vars.set('x', x);
-    try {
-      return evaluate(body, ctx);
-    } catch {
-      return NaN;
-    }
-  };
+/** `name = <closed expr>` with a plain, non-reserved name → the definition. */
+function definitionParts(rel: Relation): { name: string; rhs: Expr } | null {
+  if (rel.ops.length !== 1 || rel.ops[0] !== '=') return null;
+  const [a, b] = rel.operands;
+  const pick = (lhs: Expr, rhs: Expr): { name: string; rhs: Expr } | null =>
+    lhs.kind === 'ident' &&
+    !RESERVED.has(lhs.name) &&
+    !(lhs.name in CONSTANTS) &&
+    freeVars(rhs).size === 0
+      ? { name: lhs.name, rhs }
+      : null;
+  return pick(a, b) ?? pick(b, a);
 }
 
-export function analyze(source: string, angleMode: AngleMode): Analysis {
+export function analyze(
+  source: string,
+  angleMode: AngleMode,
+  defined: ReadonlySet<string>,
+): Analysis {
   if (source.trim() === '') return { kind: 'empty' };
 
   let ast: Expr;
@@ -103,16 +128,44 @@ export function analyze(source: string, angleMode: AngleMode): Analysis {
   const withRestriction = (body: Expr): Expr =>
     restriction ? { ...restriction, body } : body;
 
+  const coldCtx = (): ReturnType<typeof makeContext> => makeContext({ angleMode });
+
+  const toPlot = (body: Expr): Analysis => {
+    const restricted = withRestriction(body);
+    const vars = freeVars(restricted);
+    vars.delete('x');
+    for (const name of defined) vars.delete(name);
+    if (vars.size > 0) return unknownVariable(ast, vars);
+
+    let compiled;
+    try {
+      compiled = compile(restricted, { angleMode });
+    } catch (e) {
+      if (e instanceof GcalcError) return { kind: 'error', diagnostic: e.info };
+      throw e;
+    }
+    const deps = [...freeVars(restricted)].filter((n) => n !== 'x').sort();
+    const f = (x: number, env: Env): number => {
+      env.x = x;
+      return compiled(env);
+    };
+    return { kind: 'plot', ast, f, deps };
+  };
+
   if (core.kind === 'relation') {
     const body = explicitBody(core);
-    if (body !== null) {
-      const vars = freeVars(withRestriction(body));
-      vars.delete('x');
-      if (vars.size > 0) {
-        return unknownVariable(ast, vars);
+    if (body !== null) return toPlot(body);
+
+    const def = definitionParts(core);
+    if (def !== null && !restriction) {
+      try {
+        return { kind: 'definition', ast, name: def.name, value: evaluate(def.rhs, coldCtx()) };
+      } catch (e) {
+        if (e instanceof GcalcError) return { kind: 'error', diagnostic: e.info };
+        throw e;
       }
-      return { kind: 'plot', ast, f: makeF(withRestriction(body), angleMode) };
     }
+
     return {
       kind: 'unsupported',
       ast,
@@ -127,19 +180,15 @@ export function analyze(source: string, angleMode: AngleMode): Analysis {
   const vars = freeVars(withRestriction(core));
   if (vars.size === 0 && !restriction) {
     try {
-      const ctx = makeContext({ angleMode });
-      return { kind: 'value', ast, value: evaluate(core, ctx) };
+      return { kind: 'value', ast, value: evaluate(core, coldCtx()) };
     } catch (e) {
       if (e instanceof GcalcError) return { kind: 'error', diagnostic: e.info };
       throw e;
     }
   }
 
-  vars.delete('x');
-  if (vars.size > 0) return unknownVariable(ast, vars);
-
-  // Bare expression in x → treat as y = expr, Desmos-style.
-  return { kind: 'plot', ast, f: makeF(withRestriction(core), angleMode) };
+  // Bare expression in x (and sliders) → treat as y = expr, Desmos-style.
+  return toPlot(core);
 }
 
 function unknownVariable(ast: Expr, vars: Set<string>): Analysis {
@@ -151,12 +200,35 @@ function unknownVariable(ast: Expr, vars: Set<string>): Analysis {
       message: `"${name}" is not defined.`,
       span: ast.span,
       suggestion: {
-        label: `Add a slider for ${name} (M3)`,
+        label: `Add a slider for ${name}`,
         action: 'create-slider',
         name,
       },
     },
   };
+}
+
+const defNameCache = new Map<string, string | null>();
+
+/**
+ * Fast pass-1 classifier: the slider name a line defines, or null. Memoized
+ * by source — App calls this for every row on every render.
+ */
+export function definitionName(source: string): string | null {
+  const hit = defNameCache.get(source);
+  if (hit !== undefined) return hit;
+  if (defNameCache.size > 1000) defNameCache.clear();
+  let name: string | null = null;
+  try {
+    const ast = parse(source);
+    if (ast.kind === 'relation') {
+      name = definitionParts(ast)?.name ?? null;
+    }
+  } catch {
+    name = null;
+  }
+  defNameCache.set(source, name);
+  return name;
 }
 
 /** Apply a machine suggestion edit to the source text. */

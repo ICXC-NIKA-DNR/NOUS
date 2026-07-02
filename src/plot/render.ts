@@ -101,6 +101,11 @@ export function drawGrid(ctx: CanvasRenderingContext2D, vp: Viewport, theme: The
   }
 }
 
+// Points closer than this to the previously drawn point are skipped: they
+// can't change the stroked shape, but they cost real time on software
+// rasterizers (WebKitGTK without GPU acceleration).
+const DECIMATE_PX = 0.75;
+
 export function drawCurve(
   ctx: CanvasRenderingContext2D,
   segments: Segment[],
@@ -108,14 +113,28 @@ export function drawCurve(
 ): void {
   ctx.strokeStyle = style.color;
   ctx.lineWidth = style.widthPx;
-  ctx.lineJoin = 'round';
-  ctx.lineCap = 'round';
+  // bevel/butt are measurably cheaper than round on software rasterizers,
+  // and indistinguishable on adaptively-sampled smooth curves.
+  ctx.lineJoin = 'bevel';
+  ctx.lineCap = 'butt';
   ctx.beginPath();
   for (const seg of segments) {
-    ctx.moveTo(seg[0], seg[1]);
-    for (let i = 2; i < seg.length; i += 2) {
-      ctx.lineTo(seg[i], seg[i + 1]);
+    let lx = seg[0];
+    let ly = seg[1];
+    ctx.moveTo(lx, ly);
+    const last = seg.length - 2;
+    for (let i = 2; i < last; i += 2) {
+      const x = seg[i];
+      const y = seg[i + 1];
+      const dx = x - lx;
+      const dy = y - ly;
+      if (dx * dx + dy * dy < DECIMATE_PX * DECIMATE_PX) continue;
+      ctx.lineTo(x, y);
+      lx = x;
+      ly = y;
     }
+    // Segment endpoints always draw — they carry gap/asymptote geometry.
+    ctx.lineTo(seg[last], seg[last + 1]);
   }
   ctx.stroke();
 }

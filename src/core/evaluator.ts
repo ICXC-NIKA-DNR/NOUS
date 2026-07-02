@@ -65,7 +65,7 @@ const plain = (f: (...xs: number[]) => number, minArity = 1, maxArity = minArity
   apply: (args) => f(...args),
 });
 
-function factorial(n: number): number {
+export function factorial(n: number): number {
   if (!Number.isInteger(n) || n < 0) return NaN; // Gamma extension: future work
   if (n > 170) return Infinity;
   let acc = 1;
@@ -238,7 +238,7 @@ export function evaluate(node: Expr, ctx: EvalContext): number {
   }
 }
 
-const EQ_EPS = 1e-9;
+export const EQ_EPS = 1e-9;
 
 /** Evaluate a (possibly chained) relation as a boolean condition. */
 export function evaluateCondition(rel: Relation, ctx: EvalContext): boolean {

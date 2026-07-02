@@ -26,6 +26,26 @@ If Tauri CLI versions have drifted from this scaffold, regenerate the config
 with `npx tauri init`/`create-tauri-app` rather than hand-patching, then
 re-apply the identifier (`org.gcalc.app`) and window settings.
 
+### Linux: choppy rendering / low fps
+
+Some WebKitGTK + GPU driver combinations (seen on Intel iGPUs) deliver
+requestAnimationFrame at well below the display refresh rate through the
+DMA-BUF renderer. If panning or slider drags feel choppy, launch with:
+
+```sh
+WEBKIT_DISABLE_DMABUF_RENDERER=1 npm run tauri dev
+```
+
+Canvas rasterization falls back to CPU, which gcalc's renderer is tuned for
+(layered canvases, dirty tracking, decimated strokes).
+
+### Performance harness
+
+Open the app with `?perf=50` appended to the dev URL (edit `devUrl` in
+`src-tauri/tauri.conf.json` temporarily) to load 5 sliders + 50 bound
+expressions with an fps HUD and automated slider sweeps. The M3 acceptance
+gate: no sustained drops below ~50 fps while a slider drags.
+
 ## Layout
 
 ```
