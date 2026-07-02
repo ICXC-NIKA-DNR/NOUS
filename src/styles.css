@@ -1,0 +1,56 @@
+/* Dark mode is the only theme (see CLAUDE.md). Charcoal, not pure black. */
+:root {
+  --bg: #1b1d21;
+  --bg-raised: #232529;
+  --border: #34373d;
+  --text: #e6e6ea;
+  --text-dim: #9a9da5;
+
+  /* Pastel curve palette, fixed rotation. MUST be re-verified under
+     deuteranopia/protanopia/tritanopia simulation in M10 before release. */
+  --curve-1: #8ab4f8; /* soft blue */
+  --curve-2: #f8a9c4; /* soft pink */
+  --curve-3: #9be8b8; /* soft green */
+  --curve-4: #c5a9f8; /* soft purple */
+  --curve-5: #f5e08a; /* soft yellow */
+  --curve-6: #8ae0e8; /* soft cyan */
+}
+
+* { box-sizing: border-box; }
+
+html, body, #root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  /* Bundled locally via @fontsource/inter (see src/main.tsx) — never Arial (see CLAUDE.md). */
+  font-family: 'Inter', system-ui, sans-serif;
+}
+
+.app {
+  display: flex;
+  height: 100%;
+}
+
+.sidebar {
+  width: 320px;
+  min-width: 240px;
+  background: var(--bg-raised);
+  border-right: 1px solid var(--border);
+  padding: 12px;
+}
+
+.canvas-area {
+  flex: 1;
+  display: grid;
+  place-items: center;
+}
+
+.sidebar-placeholder,
+.canvas-placeholder {
+  color: var(--text-dim);
+  font-size: 14px;
+}
