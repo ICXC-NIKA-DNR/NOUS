@@ -1,6 +1,7 @@
 // Canvas 2D drawing: grid, axes, labels, curves. Takes sampled segments —
 // all math lives in viewport.ts/ticks.ts/sampler.ts.
 
+import type { RegionMask } from './implicit.ts';
 import type { Segment } from './sampler.ts';
 import { tickStep, tickValues, formatTick } from './ticks.ts';
 import { xToPx, yToPx, type Viewport } from './viewport.ts';
@@ -17,6 +18,8 @@ export interface Theme {
 export interface CurveStyle {
   color: string;
   widthPx: number;
+  /** Dash pattern (e.g. strict inequality boundaries). Default solid. */
+  dash?: number[];
 }
 
 export function drawGrid(ctx: CanvasRenderingContext2D, vp: Viewport, theme: Theme): void {
@@ -101,6 +104,45 @@ export function drawGrid(ctx: CanvasRenderingContext2D, vp: Viewport, theme: The
   }
 }
 
+/** Parse "#rrggbb" once for mask tinting. */
+function hexRgb(color: string): [number, number, number] {
+  const m = /^#([0-9a-f]{6})$/i.exec(color.trim());
+  if (!m) return [138, 180, 248]; // fallback: pastel blue
+  const v = parseInt(m[1], 16);
+  return [(v >> 16) & 0xff, (v >> 8) & 0xff, v & 0xff];
+}
+
+/**
+ * Draw an inequality region: the mask (one byte per cell) becomes a small
+ * ImageData tinted with the curve color, scaled up with smoothing for soft
+ * edges. Callers stroke the boundary contour on top to crisp the silhouette.
+ */
+export function drawRegion(
+  ctx: CanvasRenderingContext2D,
+  mask: RegionMask,
+  vp: Viewport,
+  color: string,
+  alpha = 0.22,
+): void {
+  const [r, g, b] = hexRgb(color);
+  const image = new ImageData(mask.cols, mask.rows);
+  const a = Math.round(alpha * 255);
+  for (let i = 0; i < mask.cells.length; i++) {
+    if (mask.cells[i] === 0) continue;
+    const o = i * 4;
+    image.data[o] = r;
+    image.data[o + 1] = g;
+    image.data[o + 2] = b;
+    image.data[o + 3] = a;
+  }
+  const off = document.createElement('canvas');
+  off.width = mask.cols;
+  off.height = mask.rows;
+  off.getContext('2d')!.putImageData(image, 0, 0);
+  ctx.imageSmoothingEnabled = true;
+  ctx.drawImage(off, 0, 0, vp.width, vp.height);
+}
+
 // Points closer than this to the previously drawn point are skipped: they
 // can't change the stroked shape, but they cost real time on software
 // rasterizers (WebKitGTK without GPU acceleration).
@@ -117,6 +159,7 @@ export function drawCurve(
   // and indistinguishable on adaptively-sampled smooth curves.
   ctx.lineJoin = 'bevel';
   ctx.lineCap = 'butt';
+  ctx.setLineDash(style.dash ?? []);
   ctx.beginPath();
   for (const seg of segments) {
     let lx = seg[0];

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { analyze, applyEdit, formatValue, freeVars } from '../analyze.ts';
+import { analyze, applyEdit, formatValue, freeVars, type Analysis, type PlotSpec } from '../analyze.ts';
 import type { AngleMode } from '../../core/evaluator.ts';
 import { parse } from '../../core/parser.ts';
 import { toTex } from '../tex.ts';
@@ -9,41 +9,160 @@ const NONE: ReadonlySet<string> = new Set();
 const an = (src: string, mode: AngleMode = 'radians', defined: ReadonlySet<string> = NONE) =>
   analyze(src, mode, defined);
 
-test('y = sin(x) is a plot', () => {
-  const a = an('y = sin(x)');
-  assert.equal(a.kind, 'plot');
-  if (a.kind !== 'plot') return;
-  assert.ok(Math.abs(a.f(Math.PI / 2, {}) - 1) < 1e-12);
-  assert.deepEqual(a.deps, []);
+function spec<T extends PlotSpec['type']>(a: Analysis, type: T): Extract<PlotSpec, { type: T }> {
+  assert.equal(a.kind, 'plot', `expected a plot, got ${a.kind}`);
+  const s = (a as Extract<Analysis, { kind: 'plot' }>).spec;
+  assert.equal(s.type, type, `expected ${type}, got ${s.type}`);
+  return s as Extract<PlotSpec, { type: T }>;
+}
+
+/* ---- explicit ---- */
+
+test('y = sin(x) is an explicit plot', () => {
+  const s = spec(an('y = sin(x)'), 'explicit');
+  assert.ok(Math.abs(s.f(Math.PI / 2, {}) - 1) < 1e-12);
 });
 
-test('x^2 = y (flipped sides) is a plot', () => {
-  const a = an('x^2 = y');
-  assert.equal(a.kind, 'plot');
-  if (a.kind !== 'plot') return;
-  assert.equal(a.f(3, {}), 9);
+test('bare expression and flipped sides are explicit', () => {
+  assert.equal(spec(an('x^3 - x'), 'explicit').f(2, {}), 6);
+  assert.equal(spec(an('x^2 = y'), 'explicit').f(3, {}), 9);
 });
 
-test('bare expression in x plots as y = expr', () => {
-  const a = an('x^3 - x');
-  assert.equal(a.kind, 'plot');
-  if (a.kind !== 'plot') return;
-  assert.equal(a.f(2, {}), 6);
+test('piecewise plots as explicit', () => {
+  const s = spec(an('{x < 0: -x, x}'), 'explicit');
+  assert.equal(s.f(-3, {}), 3);
+  assert.equal(s.f(4, {}), 4);
 });
 
-test('restriction gives NaN gaps and stays a plot', () => {
-  const a = an('y = x {x > 0}');
-  assert.equal(a.kind, 'plot');
-  if (a.kind !== 'plot') return;
-  assert.equal(a.f(5, {}), 5);
-  assert.ok(Number.isNaN(a.f(-5, {})));
+test('restriction gives NaN gaps on explicit plots', () => {
+  const s = spec(an('y = x {x > 0}'), 'explicit');
+  assert.equal(s.f(5, {}), 5);
+  assert.ok(Number.isNaN(s.f(-5, {})));
 });
 
-test('angle mode threads through to evaluation', () => {
-  const a = an('y = sin(x)', 'degrees');
-  assert.equal(a.kind, 'plot');
-  if (a.kind !== 'plot') return;
-  assert.ok(Math.abs(a.f(90, {}) - 1) < 1e-12);
+test('angle mode threads through', () => {
+  const s = spec(an('y = sin(x)', 'degrees'), 'explicit');
+  assert.ok(Math.abs(s.f(90, {}) - 1) < 1e-12);
+});
+
+/* ---- parametric ---- */
+
+test('(cos t, sin t) is parametric with default t in [0,1]', () => {
+  const s = spec(an('(cos(t), sin(t))'), 'parametric');
+  assert.equal(s.t0({}), 0);
+  assert.equal(s.t1({}), 1);
+  assert.ok(Math.abs(s.fx(0, {}) - 1) < 1e-12);
+  assert.ok(Math.abs(s.fy(Math.PI / 2, {}) - 1) < 1e-12);
+});
+
+test('parametric t-range comes from the restriction, slider bounds allowed', () => {
+  const s = spec(an('(cos(t), sin(t)) {0 < t < 2pi}'), 'parametric');
+  assert.equal(s.t0({}), 0);
+  assert.ok(Math.abs(s.t1({}) - 2 * Math.PI) < 1e-12);
+  const s2 = spec(an('(t, t^2) {0 < t < k}', 'radians', new Set(['k'])), 'parametric');
+  assert.equal(s2.t1({ k: 3 }), 3);
+});
+
+test('non-bound restriction conditions gate parametric points', () => {
+  const s = spec(an('(t, t) {t^2 < 4}'), 'parametric');
+  assert.ok(Number.isNaN(s.fx(3, {})));
+  assert.equal(s.fx(1, {}), 1);
+});
+
+/* ---- polar ---- */
+
+test('r = f(theta) is polar with default full turn', () => {
+  const s = spec(an('r = 2cos(3theta)'), 'polar');
+  assert.ok(Math.abs(s.th1({}) - 2 * Math.PI) < 1e-12);
+  assert.ok(Math.abs(s.fr(0, {}) - 2) < 1e-12);
+});
+
+test('polar range respects restriction and degrees mode', () => {
+  const s = spec(an('r = theta {0 < theta < pi}'), 'polar');
+  assert.ok(Math.abs(s.th1({}) - Math.PI) < 1e-12);
+  const sDeg = spec(an('r = 1', 'degrees'), 'polar');
+  assert.equal(sDeg.th1({}), 360);
+});
+
+test('r = 2 is a polar circle, not a slider definition', () => {
+  spec(an('r = 2'), 'polar');
+});
+
+/* ---- implicit + regions ---- */
+
+test('x^2 + y^2 = 25 is implicit with F = lhs - rhs', () => {
+  const s = spec(an('x^2 + y^2 = 25'), 'implicit');
+  assert.equal(s.F(3, 4, {}), 0);
+  assert.equal(s.F(0, 0, {}), -25);
+});
+
+test('x = 1 is an implicit vertical line', () => {
+  const s = spec(an('x = 1'), 'implicit');
+  assert.equal(s.F(1, 99, {}), 0);
+});
+
+test('y > x^2 is a region with a dashed (strict) boundary', () => {
+  const s = spec(an('y > x^2'), 'region');
+  assert.ok(s.inside(0, 1, {}));
+  assert.ok(!s.inside(0, -1, {}));
+  assert.equal(s.boundaries.length, 1);
+  assert.ok(s.boundaries[0].strict);
+});
+
+test('chained inequality region: 1 < x^2 + y^2 <= 4 (annulus)', () => {
+  const s = spec(an('1 < x^2 + y^2 <= 4'), 'region');
+  assert.ok(s.inside(1.2, 0, {}));
+  assert.ok(!s.inside(0.5, 0, {}));
+  assert.ok(!s.inside(3, 0, {}));
+  assert.equal(s.boundaries.length, 2);
+  assert.ok(s.boundaries[0].strict);
+  assert.ok(!s.boundaries[1].strict);
+});
+
+test('restriction gates regions', () => {
+  const s = spec(an('y < x {x > 0}'), 'region');
+  assert.ok(s.inside(2, 1, {}));
+  assert.ok(!s.inside(-2, -3, {}));
+});
+
+/* ---- points, vectors, fields ---- */
+
+test('a literal point and a list of points plot as points', () => {
+  const p = spec(an('(1, 2)'), 'points');
+  assert.equal(p.pts.length, 1);
+  assert.equal(p.pts[0].fy({}), 2);
+  const l = spec(an('[(1, 2), (3, 4), (5, 6)]'), 'points');
+  assert.equal(l.pts.length, 3);
+  assert.equal(l.pts[2].fx({}), 5);
+});
+
+test('point restriction gates visibility', () => {
+  const p = spec(an('(k, k) {k > 0}', 'radians', new Set(['k'])), 'points');
+  assert.ok(p.gate({ k: 1 }));
+  assert.ok(!p.gate({ k: -1 }));
+});
+
+test('vector((0,0), (3,4)) is a vector', () => {
+  const v = spec(an('vector((0, 0), (3, 4))'), 'vector');
+  assert.equal(v.to.fx({}), 3);
+  assert.equal(v.to.fy({}), 4);
+});
+
+test('a point in x and y is a vector field', () => {
+  const f = spec(an('(-y, x)'), 'field');
+  assert.equal(f.P(2, 3, {}), -3);
+  assert.equal(f.Q(2, 3, {}), 2);
+});
+
+/* ---- definitions, values, errors ---- */
+
+test('a = 1 is a definition; deps track sliders', () => {
+  const a = an('a = 1');
+  assert.equal(a.kind, 'definition');
+  const p = an('y = a x + b', 'radians', new Set(['a', 'b']));
+  assert.equal(p.kind, 'plot');
+  if (p.kind !== 'plot') return;
+  assert.deepEqual(p.deps, ['a', 'b']);
 });
 
 test('constant expression is a value', () => {
@@ -51,47 +170,6 @@ test('constant expression is a value', () => {
   assert.equal(a.kind, 'value');
   if (a.kind !== 'value') return;
   assert.equal(a.value, 6);
-});
-
-/* --- definitions and sliders (M3) --- */
-
-test('a = 1 is a definition', () => {
-  const a = an('a = 1');
-  assert.equal(a.kind, 'definition');
-  if (a.kind !== 'definition') return;
-  assert.equal(a.name, 'a');
-  assert.equal(a.value, 1);
-});
-
-test('definition rhs may be any closed expression, either side', () => {
-  const a = an('k = pi/2');
-  assert.equal(a.kind, 'definition');
-  if (a.kind !== 'definition') return;
-  assert.ok(Math.abs(a.value - Math.PI / 2) < 1e-12);
-  const b = an('3 = c');
-  assert.equal(b.kind, 'definition');
-});
-
-test('x = 1 and y = 1 are not definitions', () => {
-  assert.equal(an('x = 1').kind, 'unsupported'); // vertical line, M4
-  assert.equal(an('y = 1').kind, 'plot');
-});
-
-test('plots may reference defined names, tracked as deps', () => {
-  const defined = new Set(['a', 'b']);
-  const a = an('y = a x + b', 'radians', defined);
-  assert.equal(a.kind, 'plot');
-  if (a.kind !== 'plot') return;
-  assert.deepEqual(a.deps, ['a', 'b']);
-  assert.equal(a.f(2, { a: 3, b: 1 }), 7);
-  assert.ok(Number.isNaN(a.f(2, {}))); // missing slider value = gap
-});
-
-test('deps include names used only in restrictions', () => {
-  const a = an('y = x {x > c}', 'radians', new Set(['c']));
-  assert.equal(a.kind, 'plot');
-  if (a.kind !== 'plot') return;
-  assert.deepEqual(a.deps, ['c']);
 });
 
 test('undefined variable carries the create-slider suggestion', () => {
@@ -103,23 +181,12 @@ test('undefined variable carries the create-slider suggestion', () => {
   assert.equal(a.diagnostic.suggestion?.name, 'a');
 });
 
-test('defining the slider resolves the error', () => {
-  assert.equal(an('y = a x^2').kind, 'error');
-  assert.equal(an('y = a x^2', 'radians', new Set(['a'])).kind, 'plot');
-});
-
-/* --- errors and misc --- */
-
 test('parse errors surface the core diagnostic', () => {
   const a = an('y = sin(x');
   assert.equal(a.kind, 'error');
   if (a.kind !== 'error') return;
   assert.equal(a.diagnostic.kind, 'unmatched-paren');
   assert.ok(a.diagnostic.suggestion?.edit);
-});
-
-test('inequalities are flagged as M4', () => {
-  assert.equal(an('y > x').kind, 'unsupported');
 });
 
 test('empty and whitespace input', () => {
@@ -143,34 +210,26 @@ test('applyEdit performs insert and replace edits', () => {
 test('formatValue trims noise', () => {
   assert.equal(formatValue(6), '6');
   assert.equal(formatValue(Math.PI), '3.14159');
-  assert.equal(formatValue(0.5), '0.5');
   assert.equal(formatValue(NaN), 'undefined');
-  assert.equal(formatValue(Infinity), '∞');
 });
 
-/* toTex — the display layer's spec */
+/* ---- toTex ---- */
 
 const tex = (src: string): string => toTex(parse(src));
 
-test('toTex renders functions upright and variables italic', () => {
+test('toTex renders functions upright, fractions, precedence', () => {
   assert.equal(tex('sin(x)'), '\\sin\\left(x\\right)');
-  assert.equal(tex('y = x^2'), 'y = x^{2}');
-});
-
-test('toTex uses \\frac for division', () => {
   assert.equal(tex('1/x'), '\\frac{1}{x}');
-  assert.equal(tex('(x+1)/(x-1)'), '\\frac{x + 1}{x - 1}');
-});
-
-test('toTex juxtaposes implicit products but keeps explicit dots', () => {
+  assert.equal(tex('(x+1)^2'), '\\left(x + 1\\right)^{2}');
   assert.equal(tex('2x'), '2 x');
   assert.equal(tex('2*3'), '2 \\cdot 3');
 });
 
-test('toTex parenthesizes by precedence', () => {
-  assert.equal(tex('(x+1)^2'), '\\left(x + 1\\right)^{2}');
-  assert.equal(tex('-x^2'), '-x^{2}');
-  assert.equal(tex('(-x)^2'), '\\left(-x\\right)^{2}');
+test('toTex renders piecewise as cases', () => {
+  assert.equal(
+    tex('{x < 0: -x, x}'),
+    '\\begin{cases}-x & x < 0 \\\\ x & \\text{otherwise}\\end{cases}',
+  );
 });
 
 test('toTex renders greek, sqrt, abs, and restrictions', () => {

@@ -173,6 +173,12 @@ export function toTex(node: Expr): string {
       return `${toTex(node.body)} \\;\\left\\{${conds}\\right\\}`;
     }
 
+    case 'piecewise': {
+      const rows = node.branches.map((b) => `${toTex(b.value)} & ${toTex(b.condition)}`);
+      if (node.fallback) rows.push(`${toTex(node.fallback)} & \\text{otherwise}`);
+      return `\\begin{cases}${rows.join(' \\\\ ')}\\end{cases}`;
+    }
+
     case 'point':
       return `\\left(${toTex(node.x)}, ${toTex(node.y)}\\right)`;
 

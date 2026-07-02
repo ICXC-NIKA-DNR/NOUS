@@ -27,6 +27,7 @@ export type TokenType =
   | 'lbracket'
   | 'rbracket'
   | 'comma'
+  | 'colon'
   | 'pipe'
   | 'eof';
 
@@ -249,6 +250,10 @@ export function lex(source: string, options: LexOptions = {}): Token[] {
       case ',':
         i++;
         push('comma', start, i);
+        continue;
+      case ':':
+        i++;
+        push('colon', start, i);
         continue;
       case '|':
         i++;

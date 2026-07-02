@@ -9,16 +9,142 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Env } from '../core/compile.ts';
-import { drawCurve, drawGrid, type Theme } from '../plot/render.ts';
+import { contour, regionMask, type RegionMask } from '../plot/implicit.ts';
+import { drawArrow, drawVectorField, drawWorldPoint } from '../plot/marks.ts';
+import { sampleParametric } from '../plot/parametric.ts';
+import { drawCurve, drawGrid, drawRegion, type Theme } from '../plot/render.ts';
 import { sampleCurve, type Segment } from '../plot/sampler.ts';
-import { defaultViewport, pan, resize, zoomAt, type Viewport } from '../plot/viewport.ts';
+import { defaultViewport, pan, resize, xToPx, yToPx, zoomAt, type Viewport } from '../plot/viewport.ts';
+import type { PlotSpec } from './analyze.ts';
 
 export interface PlottedCurve {
   id: number;
-  f: (x: number, env: Env) => number;
-  /** Slider values this curve reads, joined — the dirty-tracking key. */
+  spec: PlotSpec;
+  /** Slider values this item reads, joined — the dirty-tracking key. */
   fingerprint: string;
   color: string;
+}
+
+/** Cached geometry per item — everything derivable from (spec, vp, env). */
+type Artifact =
+  | { kind: 'segments'; segments: Segment[] }
+  | {
+      kind: 'region';
+      mask: RegionMask;
+      boundaries: Array<{ segments: Segment[]; dashed: boolean }>;
+    }
+  | { kind: 'points'; pts: Array<[number, number]> }
+  | { kind: 'vector'; from: [number, number]; to: [number, number] }
+  | { kind: 'field' } // sampled cheaply at draw time
+  | { kind: 'nothing' };
+
+function buildArtifact(spec: PlotSpec, vp: Viewport, env: Env): Artifact {
+  switch (spec.type) {
+    case 'explicit':
+      return { kind: 'segments', segments: sampleCurve((x) => spec.f(x, env), vp) };
+    case 'parametric': {
+      const t0 = spec.t0(env);
+      const t1 = spec.t1(env);
+      if (!(t1 > t0)) return { kind: 'nothing' };
+      return {
+        kind: 'segments',
+        segments: sampleParametric((t) => spec.fx(t, env), (t) => spec.fy(t, env), t0, t1, vp),
+      };
+    }
+    case 'polar': {
+      const th0 = spec.th0(env);
+      const th1 = spec.th1(env);
+      if (!(th1 > th0)) return { kind: 'nothing' };
+      const k = spec.toRad;
+      return {
+        kind: 'segments',
+        segments: sampleParametric(
+          (th) => spec.fr(th, env) * Math.cos(th * k),
+          (th) => spec.fr(th, env) * Math.sin(th * k),
+          th0,
+          th1,
+          vp,
+        ),
+      };
+    }
+    case 'implicit':
+      return { kind: 'segments', segments: contour((x, y) => spec.F(x, y, env), vp) };
+    case 'region':
+      return {
+        kind: 'region',
+        mask: regionMask((x, y) => spec.inside(x, y, env), vp),
+        boundaries: spec.boundaries.map((b) => ({
+          segments: contour((x, y) => b.F(x, y, env), vp),
+          dashed: b.strict,
+        })),
+      };
+    case 'points': {
+      if (!spec.gate(env)) return { kind: 'nothing' };
+      const pts: Array<[number, number]> = [];
+      for (const p of spec.pts) {
+        const wx = p.fx(env);
+        const wy = p.fy(env);
+        if (Number.isFinite(wx) && Number.isFinite(wy)) pts.push([wx, wy]);
+      }
+      return { kind: 'points', pts };
+    }
+    case 'vector': {
+      if (!spec.gate(env)) return { kind: 'nothing' };
+      const from: [number, number] = [spec.from.fx(env), spec.from.fy(env)];
+      const to: [number, number] = [spec.to.fx(env), spec.to.fy(env)];
+      if (!from.every(Number.isFinite) || !to.every(Number.isFinite)) {
+        return { kind: 'nothing' };
+      }
+      return { kind: 'vector', from, to };
+    }
+    case 'field':
+      return { kind: 'field' };
+  }
+}
+
+function drawArtifact(
+  ctx: CanvasRenderingContext2D,
+  artifact: Artifact,
+  item: PlottedCurve,
+  vp: Viewport,
+  env: Env,
+): void {
+  switch (artifact.kind) {
+    case 'segments':
+      drawCurve(ctx, artifact.segments, { color: item.color, widthPx: 2 });
+      break;
+    case 'region':
+      drawRegion(ctx, artifact.mask, vp, item.color);
+      for (const b of artifact.boundaries) {
+        drawCurve(ctx, b.segments, {
+          color: item.color,
+          widthPx: 1.75,
+          dash: b.dashed ? [6, 5] : undefined,
+        });
+      }
+      break;
+    case 'points':
+      for (const [wx, wy] of artifact.pts) drawWorldPoint(ctx, vp, wx, wy, item.color);
+      break;
+    case 'vector':
+      drawArrow(
+        ctx,
+        xToPx(vp, artifact.from[0]),
+        yToPx(vp, artifact.from[1]),
+        xToPx(vp, artifact.to[0]),
+        yToPx(vp, artifact.to[1]),
+        item.color,
+        2,
+      );
+      break;
+    case 'field': {
+      const spec = item.spec as Extract<PlotSpec, { type: 'field' }>;
+      drawVectorField(ctx, (x, y) => spec.P(x, y, env), (x, y) => spec.Q(x, y, env), vp, item.color);
+      break;
+    }
+    case 'nothing':
+      break;
+  }
 }
 
 const THEME: Theme = {
@@ -33,8 +159,8 @@ const THEME: Theme = {
 interface CacheEntry {
   vp: Viewport;
   fingerprint: string;
-  f: PlottedCurve['f'];
-  segments: Segment[];
+  spec: PlotSpec;
+  artifact: Artifact;
 }
 
 interface PointerState {
@@ -83,8 +209,8 @@ export function GraphCanvas({ curves, env, onFrame }: Props): JSX.Element {
   const [showGrid, setShowGrid] = useState(true);
   const pointerState = useRef<PointerState>({ pointers: new Map(), pinchDist: 0 });
   const cacheRef = useRef<Map<number, CacheEntry>>(new Map());
-  // Static layer contents as of its last redraw: ordered [id, segments] pairs.
-  const staticDrawnRef = useRef<Array<[number, Segment[]]>>([]);
+  // Static layer contents as of its last redraw: ordered [id, artifact] pairs.
+  const staticDrawnRef = useRef<Array<[number, Artifact]>>([]);
 
   // Size to the container: measure synchronously on mount (don't wait for
   // the observer's first tick), then track resizes.
@@ -126,11 +252,11 @@ export function GraphCanvas({ curves, env, onFrame }: Props): JSX.Element {
     const t0 = performance.now();
     const dpr = window.devicePixelRatio || 1;
 
-    // Pass 1: resolve segments per curve, partition changed vs unchanged.
+    // Pass 1: resolve the artifact per item, partition changed vs unchanged.
     const cache = cacheRef.current;
     const seen = new Set<number>();
-    const changed: Array<[PlottedCurve, Segment[]]> = [];
-    const unchanged: Array<[number, Segment[], string]> = []; // id, segs, color
+    const changed: Array<[PlottedCurve, Artifact]> = [];
+    const unchanged: Array<[PlottedCurve, Artifact]> = [];
     for (const curve of curves) {
       seen.add(curve.id);
       const hit = cache.get(curve.id);
@@ -138,45 +264,45 @@ export function GraphCanvas({ curves, env, onFrame }: Props): JSX.Element {
         hit !== undefined &&
         hit.vp === viewport &&
         hit.fingerprint === curve.fingerprint &&
-        hit.f === curve.f
+        hit.spec === curve.spec
       ) {
-        unchanged.push([curve.id, hit.segments, curve.color]);
+        unchanged.push([curve, hit.artifact]);
       } else {
-        const segments = sampleCurve((x) => curve.f(x, env), viewport);
-        cache.set(curve.id, { vp: viewport, fingerprint: curve.fingerprint, f: curve.f, segments });
-        changed.push([curve, segments]);
+        const artifact = buildArtifact(curve.spec, viewport, env);
+        cache.set(curve.id, { vp: viewport, fingerprint: curve.fingerprint, spec: curve.spec, artifact });
+        changed.push([curve, artifact]);
       }
     }
     for (const id of cache.keys()) {
       if (!seen.has(id)) cache.delete(id);
     }
 
-    // Pass 2: static layer — re-stroke only when its membership changed.
+    // Pass 2: static layer — redraw only when its membership changed.
     const prev = staticDrawnRef.current;
     const sameStatic =
       prev.length === unchanged.length &&
-      prev.every(([id, segs], i) => unchanged[i][0] === id && unchanged[i][1] === segs);
+      prev.every(([id, art], i) => unchanged[i][0].id === id && unchanged[i][1] === art);
     if (!sameStatic) {
       fitCanvas(staticCanvas, viewport, dpr);
       const sctx = staticCanvas.getContext('2d');
       if (sctx) {
         sctx.setTransform(dpr, 0, 0, dpr, 0, 0);
         sctx.clearRect(0, 0, viewport.width, viewport.height);
-        for (const [, segments, color] of unchanged) {
-          drawCurve(sctx, segments, { color, widthPx: 2 });
+        for (const [curve, artifact] of unchanged) {
+          drawArtifact(sctx, artifact, curve, viewport, env);
         }
       }
-      staticDrawnRef.current = unchanged.map(([id, segs]) => [id, segs]);
+      staticDrawnRef.current = unchanged.map(([curve, art]) => [curve.id, art]);
     }
 
-    // Pass 3: dynamic layer — the curves that changed this commit.
+    // Pass 3: dynamic layer — the items that changed this commit.
     fitCanvas(dynamicCanvas, viewport, dpr);
     const dctx = dynamicCanvas.getContext('2d');
     if (dctx) {
       dctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       dctx.clearRect(0, 0, viewport.width, viewport.height);
-      for (const [curve, segments] of changed) {
-        drawCurve(dctx, segments, { color: curve.color, widthPx: 2 });
+      for (const [curve, artifact] of changed) {
+        drawArtifact(dctx, artifact, curve, viewport, env);
       }
     }
 

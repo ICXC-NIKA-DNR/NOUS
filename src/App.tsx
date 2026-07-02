@@ -16,7 +16,7 @@ import {
   type SliderMeta,
 } from './ui/ExpressionRow.tsx';
 import { GraphCanvas, type PlottedCurve } from './ui/GraphCanvas.tsx';
-import { PerfHud, perfEntries, usePerfAnimation } from './ui/perf.tsx';
+import { galleryEntries, PerfHud, perfEntries, usePerfAnimation } from './ui/perf.tsx';
 
 let nextId = 1;
 let nextColor = 0;
@@ -28,7 +28,7 @@ export function newEntry(source = '', slider?: SliderMeta): ExpressionEntry {
   return { id: nextId++, source, colorIndex: nextColor++, visible: true, slider };
 }
 
-const INITIAL_ENTRIES = perfEntries(newEntry) ?? [newEntry()];
+const INITIAL_ENTRIES = perfEntries(newEntry) ?? galleryEntries(newEntry) ?? [newEntry()];
 
 const EMPTY_ANALYSIS: Analysis = { kind: 'empty' };
 
@@ -81,7 +81,7 @@ export function App(): JSX.Element {
       if (entry.visible && a?.kind === 'plot') {
         out.push({
           id: entry.id,
-          f: a.f,
+          spec: a.spec,
           fingerprint: a.deps.map((n) => env[n]).join(','),
           color: cssColor(entry.colorIndex),
         });

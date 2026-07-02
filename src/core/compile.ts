@@ -163,6 +163,20 @@ function compileExpr(node: Expr, ctx: EvalContext): CompiledFn {
       };
     }
 
+    case 'piecewise': {
+      const branches = node.branches.map((b) => ({
+        cond: compileCondition(b.condition, ctx),
+        value: compileExpr(b.value, ctx),
+      }));
+      const fallback = node.fallback ? compileExpr(node.fallback, ctx) : null;
+      return (env) => {
+        for (const b of branches) {
+          if (b.cond(env)) return b.value(env);
+        }
+        return fallback ? fallback(env) : NaN;
+      };
+    }
+
     case 'point':
     case 'list':
       fail({

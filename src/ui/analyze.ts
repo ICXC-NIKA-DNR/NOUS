@@ -1,43 +1,85 @@
 // Adapter between raw sidebar input and the core. Parses a line, classifies
-// it (explicit y = f(x) plot, slider definition, constant value, or
-// not-yet-supported), and compiles the evaluation closure the plot layer
-// samples. Core stays DOM-free; this file stays React-free.
+// it into a typed PlotSpec (explicit, parametric, polar, implicit, region,
+// points, vector, field), a slider definition, or a value, and compiles the
+// closures the plot layer samples. Core stays DOM-free; this stays React-free.
 //
-// Plot closures go through core/compile.ts (the hot path); one-off values
-// use the recursive evaluator (the cold path).
+// Sampling variables are reserved per plot type: x (explicit), t
+// (parametric), theta (polar), x+y (implicit/region/field). Everything else
+// free must be a defined slider — tracked in `deps` for dirty tracking.
 
-import type { Expr, Relation, Restriction } from '../core/ast.ts';
-import { compile, type Env } from '../core/compile.ts';
+import type { Expr, Relation, RelOp, Restriction, Span } from '../core/ast.ts';
+import { compile, compileCondition, type CompiledFn, type Env } from '../core/compile.ts';
 import { GcalcError, type Diagnostic, type Edit } from '../core/errors.ts';
-import { evaluate, makeContext, type AngleMode } from '../core/evaluator.ts';
+import { evaluate, makeContext, type AngleMode, type EvalContext } from '../core/evaluator.ts';
 import { CONSTANTS, FUNCTION_NAMES } from '../core/names.ts';
 import { parse } from '../core/parser.ts';
+
+/* ------------------------------------------------------------------ */
+/* Types                                                                */
+/* ------------------------------------------------------------------ */
+
+export type BoundFn = (env: Env) => number;
+
+export type PlotSpec =
+  | { type: 'explicit'; f: (x: number, env: Env) => number }
+  | {
+      type: 'parametric';
+      fx: (t: number, env: Env) => number;
+      fy: (t: number, env: Env) => number;
+      t0: BoundFn;
+      t1: BoundFn;
+    }
+  | {
+      type: 'polar';
+      fr: (theta: number, env: Env) => number;
+      th0: BoundFn;
+      th1: BoundFn;
+      /** θ → radians conversion for the x/y projection (1 or π/180). */
+      toRad: number;
+    }
+  | { type: 'implicit'; F: (x: number, y: number, env: Env) => number }
+  | {
+      type: 'region';
+      inside: (x: number, y: number, env: Env) => boolean;
+      /** Boundary contours F=0, dashed when the adjacent op is strict. */
+      boundaries: Array<{ F: (x: number, y: number, env: Env) => number; strict: boolean }>;
+    }
+  | { type: 'points'; pts: Array<{ fx: CompiledFn; fy: CompiledFn }>; gate: (env: Env) => boolean }
+  | {
+      type: 'vector';
+      from: { fx: CompiledFn; fy: CompiledFn };
+      to: { fx: CompiledFn; fy: CompiledFn };
+      gate: (env: Env) => boolean;
+    }
+  | {
+      type: 'field';
+      P: (x: number, y: number, env: Env) => number;
+      Q: (x: number, y: number, env: Env) => number;
+    };
 
 export type Analysis =
   | { kind: 'empty' }
   | { kind: 'error'; diagnostic: Diagnostic }
-  | {
-      kind: 'plot';
-      ast: Expr;
-      /** Sampled by the plot loop; env.x is set per sample. */
-      f: (x: number, env: Env) => number;
-      /** Defined names this curve reads — the dirty-tracking key. */
-      deps: readonly string[];
-    }
+  | { kind: 'plot'; ast: Expr; spec: PlotSpec; deps: readonly string[] }
   | { kind: 'value'; ast: Expr; value: number }
-  | {
-      kind: 'definition';
-      ast: Expr;
-      /** Slider name (lhs). */
-      name: string;
-      /** Current value (rhs evaluated; rhs must be closed). */
-      value: number;
-    }
+  | { kind: 'definition'; ast: Expr; name: string; value: number }
   | { kind: 'unsupported'; ast: Expr; reason: string };
 
 const RESERVED = new Set(['x', 'y', ...FUNCTION_NAMES]);
+/** Registered so the lexer keeps these words whole. */
+const EXTRA_FUNCTIONS = ['vector'];
 
-/** Free variables: identifiers that are neither constants nor call targets. */
+/** Conjunction of restriction conditions as an env predicate. */
+function makeGate(conditions: Relation[], angleMode: AngleMode): (env: Env) => boolean {
+  if (conditions.length === 0) return () => true;
+  const compiled = conditions.map((c) => compileCondition(c, makeContext({ angleMode })));
+  return (env) => compiled.every((g) => g(env));
+}
+
+/* ------------------------------------------------------------------ */
+/* Free variables                                                       */
+/* ------------------------------------------------------------------ */
+
 export function freeVars(node: Expr, out = new Set<string>()): Set<string> {
   switch (node.kind) {
     case 'num':
@@ -65,6 +107,13 @@ export function freeVars(node: Expr, out = new Set<string>()): Set<string> {
       freeVars(node.body, out);
       for (const c of node.conditions) freeVars(c, out);
       break;
+    case 'piecewise':
+      for (const b of node.branches) {
+        freeVars(b.condition, out);
+        freeVars(b.value, out);
+      }
+      if (node.fallback) freeVars(node.fallback, out);
+      break;
     case 'point':
       freeVars(node.x, out);
       freeVars(node.y, out);
@@ -76,15 +125,34 @@ export function freeVars(node: Expr, out = new Set<string>()): Set<string> {
   return out;
 }
 
+/* ------------------------------------------------------------------ */
+/* Small AST helpers                                                    */
+/* ------------------------------------------------------------------ */
+
+const isIdent = (e: Expr, name: string): boolean => e.kind === 'ident' && e.name === name;
+
+function synthBinary(op: '-', left: Expr, right: Expr): Expr {
+  const span: Span = { start: left.span.start, end: right.span.end };
+  return { kind: 'binary', op, left, right, span };
+}
+
 /** `y = rhs` / `lhs = y` with the other side free of y → that side, else null. */
 function explicitBody(rel: Relation): Expr | null {
   if (rel.ops.length !== 1 || rel.ops[0] !== '=') return null;
   const [a, b] = rel.operands;
-  const aIsY = a.kind === 'ident' && a.name === 'y';
-  const bIsY = b.kind === 'ident' && b.name === 'y';
-  if (aIsY && !freeVars(b).has('y')) return b;
-  if (bIsY && !freeVars(a).has('y')) return a;
+  if (isIdent(a, 'y') && !freeVars(b).has('y')) return b;
+  if (isIdent(b, 'y') && !freeVars(a).has('y')) return a;
   return null;
+}
+
+/** `r = rhs` / `lhs = r` — polar when the body avoids x/y/t/r. */
+function polarBody(rel: Relation): Expr | null {
+  if (rel.ops.length !== 1 || rel.ops[0] !== '=') return null;
+  const [a, b] = rel.operands;
+  const body = isIdent(a, 'r') ? b : isIdent(b, 'r') ? a : null;
+  if (body === null) return null;
+  const vars = freeVars(body);
+  return vars.has('x') || vars.has('y') || vars.has('t') || vars.has('r') ? null : body;
 }
 
 /** `name = <closed expr>` with a plain, non-reserved name → the definition. */
@@ -101,6 +169,31 @@ function definitionParts(rel: Relation): { name: string; rhs: Expr } | null {
   return pick(a, b) ?? pick(b, a);
 }
 
+/**
+ * Try to read a restriction condition as bounds on `varName`:
+ * `a < t`, `t < b`, `a < t < b` (and >-directed forms). Returns the bound
+ * expressions or null when the condition isn't a pure bound.
+ */
+function matchBounds(rel: Relation, varName: string): { lo?: Expr; hi?: Expr } | null {
+  const increasing = rel.ops.every((op) => op === '<' || op === '<=');
+  const decreasing = rel.ops.every((op) => op === '>' || op === '>=');
+  if (!increasing && !decreasing) return null;
+  const ops: Expr[] = rel.operands;
+  const idx = ops.findIndex((o) => isIdent(o, varName));
+  if (idx === -1) return null;
+  // Every other operand must not mention the variable.
+  for (let i = 0; i < ops.length; i++) {
+    if (i !== idx && freeVars(ops[i]).has(varName)) return null;
+  }
+  const before = idx > 0 ? ops[idx - 1] : undefined;
+  const after = idx < ops.length - 1 ? ops[idx + 1] : undefined;
+  return increasing ? { lo: before, hi: after } : { lo: after, hi: before };
+}
+
+/* ------------------------------------------------------------------ */
+/* Analyze                                                              */
+/* ------------------------------------------------------------------ */
+
 export function analyze(
   source: string,
   angleMode: AngleMode,
@@ -110,89 +203,342 @@ export function analyze(
 
   let ast: Expr;
   try {
-    ast = parse(source);
+    ast = parse(source, { functionNames: EXTRA_FUNCTIONS });
   } catch (e) {
     if (e instanceof GcalcError) return { kind: 'error', diagnostic: e.info };
     throw e;
   }
 
-  // Unwrap a trailing domain restriction; re-attach it to the plotted body so
-  // failed conditions become NaN gaps.
+  try {
+    return classify(ast, angleMode, defined);
+  } catch (e) {
+    if (e instanceof GcalcError) return { kind: 'error', diagnostic: e.info };
+    throw e;
+  }
+}
+
+function classify(ast: Expr, angleMode: AngleMode, defined: ReadonlySet<string>): Analysis {
+  const opts = { angleMode };
+  const coldCtx: EvalContext = makeContext({ angleMode });
+
   let core: Expr = ast;
   let restriction: Restriction | null = null;
   if (core.kind === 'restriction') {
     restriction = core;
     core = core.body;
   }
+  const conditions: Relation[] = restriction ? restriction.conditions : [];
+
+  /** Free vars of the whole line minus sampling vars must all be sliders. */
+  const requireDeps = (sampling: string[]): readonly string[] | Analysis => {
+    const vars = freeVars(ast);
+    for (const s of sampling) vars.delete(s);
+    const deps: string[] = [];
+    for (const v of vars) {
+      if (defined.has(v)) deps.push(v);
+      else return unknownVariable(ast, v);
+    }
+    return deps.sort();
+  };
 
   const withRestriction = (body: Expr): Expr =>
     restriction ? { ...restriction, body } : body;
 
-  const coldCtx = (): ReturnType<typeof makeContext> => makeContext({ angleMode });
-
-  const toPlot = (body: Expr): Analysis => {
-    const restricted = withRestriction(body);
-    const vars = freeVars(restricted);
-    vars.delete('x');
-    for (const name of defined) vars.delete(name);
-    if (vars.size > 0) return unknownVariable(ast, vars);
-
-    let compiled;
-    try {
-      compiled = compile(restricted, { angleMode });
-    } catch (e) {
-      if (e instanceof GcalcError) return { kind: 'error', diagnostic: e.info };
-      throw e;
+  /**
+   * Split restriction conditions on `varName` into range bounds and gates;
+   * gates wrap a scalar closure so failed conditions become NaN gaps.
+   */
+  const boundsAndGates = (
+    varName: string,
+    defaultLo: number,
+    defaultHi: number,
+  ): { lo: BoundFn; hi: BoundFn; gate: (env: Env) => boolean } => {
+    const los: CompiledFn[] = [];
+    const his: CompiledFn[] = [];
+    const gates: Array<(env: Env) => boolean> = [];
+    for (const cond of conditions) {
+      const m = matchBounds(cond, varName);
+      if (m !== null && (m.lo !== undefined || m.hi !== undefined)) {
+        if (m.lo !== undefined) los.push(compile(m.lo, opts));
+        if (m.hi !== undefined) his.push(compile(m.hi, opts));
+      } else {
+        gates.push(compileCondition(cond, makeContext({ angleMode })));
+      }
     }
-    const deps = [...freeVars(restricted)].filter((n) => n !== 'x').sort();
-    const f = (x: number, env: Env): number => {
-      env.x = x;
-      return compiled(env);
+    // Defaults apply only when no explicit bound was given; multiple
+    // explicit bounds intersect (max of lowers, min of uppers).
+    return {
+      lo:
+        los.length === 0
+          ? () => defaultLo
+          : (env) => los.reduce((acc, f) => Math.max(acc, f(env)), -Infinity),
+      hi:
+        his.length === 0
+          ? () => defaultHi
+          : (env) => his.reduce((acc, f) => Math.min(acc, f(env)), Infinity),
+      gate: (env) => gates.every((g) => g(env)),
     };
-    return { kind: 'plot', ast, f, deps };
   };
 
+  /* ---- relations ---- */
   if (core.kind === 'relation') {
-    const body = explicitBody(core);
-    if (body !== null) return toPlot(body);
+    const equation = core.ops.every((op) => op === '=');
 
-    const def = definitionParts(core);
-    if (def !== null && !restriction) {
-      try {
-        return { kind: 'definition', ast, name: def.name, value: evaluate(def.rhs, coldCtx()) };
-      } catch (e) {
-        if (e instanceof GcalcError) return { kind: 'error', diagnostic: e.info };
-        throw e;
+    if (equation && core.ops.length === 1) {
+      const body = explicitBody(core);
+      if (body !== null) {
+        const deps = requireDeps(['x', 'y']);
+        if (!Array.isArray(deps)) return deps as Analysis;
+        const compiled = compile(withRestriction(body), opts);
+        return {
+          kind: 'plot',
+          ast,
+          deps,
+          spec: {
+            type: 'explicit',
+            f: (x, env) => {
+              env.x = x;
+              return compiled(env);
+            },
+          },
+        };
+      }
+
+      const rBody = polarBody(core);
+      if (rBody !== null) {
+        const deps = requireDeps(['theta', 'r']);
+        if (!Array.isArray(deps)) return deps as Analysis;
+        const compiled = compile(rBody, opts);
+        const full = angleMode === 'degrees' ? 360 : 2 * Math.PI;
+        const { lo, hi, gate } = boundsAndGates('theta', 0, full);
+        return {
+          kind: 'plot',
+          ast,
+          deps,
+          spec: {
+            type: 'polar',
+            fr: (theta, env) => {
+              env.theta = theta;
+              return gate(env) ? compiled(env) : NaN;
+            },
+            th0: lo,
+            th1: hi,
+            toRad: angleMode === 'degrees' ? Math.PI / 180 : 1,
+          },
+        };
+      }
+
+      const def = definitionParts(core);
+      if (def !== null && !restriction) {
+        return { kind: 'definition', ast, name: def.name, value: evaluate(def.rhs, coldCtx) };
       }
     }
 
+    // Implicit equation or inequality region over x/y.
+    const deps = requireDeps(['x', 'y']);
+    if (!Array.isArray(deps)) return deps as Analysis;
+
+    const gates = conditions.map((c) => compileCondition(c, makeContext({ angleMode })));
+    const gated = (env: Env): boolean => gates.every((g) => g(env));
+
+    if (equation && core.ops.length === 1) {
+      const compiled = compile(synthBinary('-', core.operands[0], core.operands[1]), opts);
+      return {
+        kind: 'plot',
+        ast,
+        deps,
+        spec: {
+          type: 'implicit',
+          F: (x, y, env) => {
+            env.x = x;
+            env.y = y;
+            return gated(env) ? compiled(env) : NaN;
+          },
+        },
+      };
+    }
+
+    // Inequality (possibly chained, possibly mixing = steps): region.
+    const insideCond = compileCondition(core, makeContext({ angleMode }));
+    const boundaries: Array<{ F: (x: number, y: number, env: Env) => number; strict: boolean }> =
+      [];
+    for (let i = 0; i < core.ops.length; i++) {
+      const op: RelOp = core.ops[i];
+      const compiled = compile(synthBinary('-', core.operands[i], core.operands[i + 1]), opts);
+      boundaries.push({
+        F: (x, y, env) => {
+          env.x = x;
+          env.y = y;
+          return gated(env) ? compiled(env) : NaN;
+        },
+        strict: op === '<' || op === '>',
+      });
+    }
     return {
-      kind: 'unsupported',
+      kind: 'plot',
       ast,
-      reason: 'Implicit equations and inequalities arrive in M4.',
+      deps,
+      spec: {
+        type: 'region',
+        inside: (x, y, env) => {
+          env.x = x;
+          env.y = y;
+          return gated(env) && insideCond(env);
+        },
+        boundaries,
+      },
     };
   }
 
-  if (core.kind === 'point' || core.kind === 'list') {
-    return { kind: 'unsupported', ast, reason: 'Points and lists plot in M4.' };
+  /* ---- points: literal, parametric, or vector field ---- */
+  if (core.kind === 'point') {
+    const vars = freeVars(withRestriction(core));
+    for (const d of defined) vars.delete(d);
+
+    if (vars.has('t') && !vars.has('x') && !vars.has('y')) {
+      const deps = requireDeps(['t']);
+      if (!Array.isArray(deps)) return deps as Analysis;
+      const cx = compile(core.x, opts);
+      const cy = compile(core.y, opts);
+      const { lo, hi, gate } = boundsAndGates('t', 0, 1);
+      return {
+        kind: 'plot',
+        ast,
+        deps,
+        spec: {
+          type: 'parametric',
+          fx: (t, env) => {
+            env.t = t;
+            return gate(env) ? cx(env) : NaN;
+          },
+          fy: (t, env) => {
+            env.t = t;
+            return gate(env) ? cy(env) : NaN;
+          },
+          t0: lo,
+          t1: hi,
+        },
+      };
+    }
+
+    if ((vars.has('x') || vars.has('y')) && !vars.has('t')) {
+      const deps = requireDeps(['x', 'y']);
+      if (!Array.isArray(deps)) return deps as Analysis;
+      const gates = conditions.map((c) => compileCondition(c, makeContext({ angleMode })));
+      const gated = (env: Env): boolean => gates.every((g) => g(env));
+      const cP = compile(core.x, opts);
+      const cQ = compile(core.y, opts);
+      return {
+        kind: 'plot',
+        ast,
+        deps,
+        spec: {
+          type: 'field',
+          P: (x, y, env) => {
+            env.x = x;
+            env.y = y;
+            return gated(env) ? cP(env) : NaN;
+          },
+          Q: (x, y, env) => {
+            env.x = x;
+            env.y = y;
+            return gated(env) ? cQ(env) : NaN;
+          },
+        },
+      };
+    }
+
+    if (vars.size === 0) {
+      const deps = requireDeps([]);
+      if (!Array.isArray(deps)) return deps as Analysis;
+      return {
+        kind: 'plot',
+        ast,
+        deps,
+        spec: {
+          type: 'points',
+          pts: [{ fx: compile(core.x, opts), fy: compile(core.y, opts) }],
+          gate: makeGate(conditions, angleMode),
+        },
+      };
+    }
+
+    return unknownVariable(ast, [...vars][0]);
   }
 
+  /* ---- vector((x0,y0), (x1,y1)) ---- */
+  if (core.kind === 'call' && core.callee === 'vector') {
+    if (core.args.length !== 2 || core.args.some((a) => a.kind !== 'point')) {
+      return {
+        kind: 'unsupported',
+        ast,
+        reason: 'vector takes two points: vector((x0, y0), (x1, y1)).',
+      };
+    }
+    const deps = requireDeps([]);
+    if (!Array.isArray(deps)) return deps as Analysis;
+    const [p, q] = core.args as Array<Extract<Expr, { kind: 'point' }>>;
+    return {
+      kind: 'plot',
+      ast,
+      deps,
+      spec: {
+        type: 'vector',
+        from: { fx: compile(p.x, opts), fy: compile(p.y, opts) },
+        to: { fx: compile(q.x, opts), fy: compile(q.y, opts) },
+        gate: makeGate(conditions, angleMode),
+      },
+    };
+  }
+
+  /* ---- lists: data tables of points ---- */
+  if (core.kind === 'list') {
+    if (core.items.length > 0 && core.items.every((item) => item.kind === 'point')) {
+      const deps = requireDeps([]);
+      if (!Array.isArray(deps)) return deps as Analysis;
+      const pts = (core.items as Array<Extract<Expr, { kind: 'point' }>>).map((p) => ({
+        fx: compile(p.x, opts),
+        fy: compile(p.y, opts),
+      }));
+      return {
+        kind: 'plot',
+        ast,
+        deps,
+        spec: { type: 'points', pts, gate: makeGate(conditions, angleMode) },
+      };
+    }
+    return {
+      kind: 'unsupported',
+      ast,
+      reason: 'Lists plot as data tables of points: [(1, 2), (3, 4)].',
+    };
+  }
+
+  /* ---- scalar expressions ---- */
   const vars = freeVars(withRestriction(core));
   if (vars.size === 0 && !restriction) {
-    try {
-      return { kind: 'value', ast, value: evaluate(core, coldCtx()) };
-    } catch (e) {
-      if (e instanceof GcalcError) return { kind: 'error', diagnostic: e.info };
-      throw e;
-    }
+    return { kind: 'value', ast, value: evaluate(core, coldCtx) };
   }
 
-  // Bare expression in x (and sliders) → treat as y = expr, Desmos-style.
-  return toPlot(core);
+  // Bare expression in x (and sliders) → y = expr, Desmos-style.
+  const deps = requireDeps(['x']);
+  if (!Array.isArray(deps)) return deps as Analysis;
+  const compiled = compile(withRestriction(core), opts);
+  return {
+    kind: 'plot',
+    ast,
+    deps,
+    spec: {
+      type: 'explicit',
+      f: (x, env) => {
+        env.x = x;
+        return compiled(env);
+      },
+    },
+  };
 }
 
-function unknownVariable(ast: Expr, vars: Set<string>): Analysis {
-  const name = [...vars][0];
+function unknownVariable(ast: Expr, name: string): Analysis {
   return {
     kind: 'error',
     diagnostic: {
@@ -208,6 +554,10 @@ function unknownVariable(ast: Expr, vars: Set<string>): Analysis {
   };
 }
 
+/* ------------------------------------------------------------------ */
+/* Pass-1 definition scan, edits, formatting (unchanged API)            */
+/* ------------------------------------------------------------------ */
+
 const defNameCache = new Map<string, string | null>();
 
 /**
@@ -220,9 +570,10 @@ export function definitionName(source: string): string | null {
   if (defNameCache.size > 1000) defNameCache.clear();
   let name: string | null = null;
   try {
-    const ast = parse(source);
+    const ast = parse(source, { functionNames: EXTRA_FUNCTIONS });
     if (ast.kind === 'relation') {
-      name = definitionParts(ast)?.name ?? null;
+      // Polar `r = …` and explicit `y = …` are plots, never definitions.
+      name = polarBody(ast) === null ? (definitionParts(ast)?.name ?? null) : null;
     }
   } catch {
     name = null;

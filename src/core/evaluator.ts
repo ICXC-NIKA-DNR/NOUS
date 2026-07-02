@@ -225,6 +225,13 @@ export function evaluate(node: Expr, ctx: EvalContext): number {
       return evaluate(node.body, ctx);
     }
 
+    case 'piecewise': {
+      for (const branch of node.branches) {
+        if (evaluateCondition(branch.condition, ctx)) return evaluate(branch.value, ctx);
+      }
+      return node.fallback ? evaluate(node.fallback, ctx) : NaN; // no branch = gap
+    }
+
     case 'point':
     case 'list':
       fail({

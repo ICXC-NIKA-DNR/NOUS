@@ -35,6 +35,37 @@ const TEMPLATES: Array<(i: number) => string> = [
   (i) => `y = b / (x - ${(i % 9) - 4})`,
 ];
 
+/**
+ * The M4 acceptance gallery (?gallery=1): every plot type, restriction
+ * syntax exercised on each family.
+ */
+const GALLERY: string[] = [
+  'y = sin(x) {x > -8}',
+  'y = 1/x',
+  '{x < 0: -x - 6, x^2/4 - 6}',
+  '(4cos(3t), 4sin(2t)) {0 < t < 2pi}',
+  'r = 2 + 2cos(theta)',
+  'r = 5cos(3theta) {0 < theta < pi}',
+  'x^2 + y^2 = 25',
+  'sin(x) = cos(y)',
+  '9 < x^2 + y^2 <= 25 {y < 0}',
+  'y <= -x - 4 {x < -2}',
+  'x = 7',
+  '(6, 4)',
+  '[(-7, 5), (-6, 5.5), (-5, 5.2), (-4, 6)]',
+  'vector((5, -3), (7, -1))',
+  '(-y/4, x/4)',
+];
+
+/** The ?gallery=1 document, or null in normal operation. */
+export function galleryEntries(
+  make: (source: string, slider?: SliderMeta) => ExpressionEntry,
+): ExpressionEntry[] | null {
+  if (typeof location === 'undefined') return null;
+  if (new URLSearchParams(location.search).get('gallery') === null) return null;
+  return GALLERY.map((src) => make(src));
+}
+
 /** The ?perf=N document, or null in normal operation. */
 export function perfEntries(
   make: (source: string, slider?: SliderMeta) => ExpressionEntry,

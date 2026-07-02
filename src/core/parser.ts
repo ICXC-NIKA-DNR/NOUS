@@ -296,6 +296,10 @@ export function parse(source: string, options: ParseOptions = {}): Expr {
       return { kind: 'list', items, span: spanFrom(open.span, close.span) };
     }
 
+    if (tok.type === 'lbrace') {
+      return parsePiecewise();
+    }
+
     if (tok.type === 'pipe' && absDepth === 0) {
       const open = next();
       absDepth++;
@@ -366,6 +370,63 @@ export function parse(source: string, options: ParseOptions = {}): Expr {
         edit: { type: 'insert', at: nameTok.span.end, text: '(' },
       },
     });
+  }
+
+  /**
+   * `{cond: value, cond: value, fallback}` in primary position (a trailing
+   * `{...}` after a complete expression is a restriction — handled at top
+   * level). `{cond}` without a value is the Desmos shorthand for 1-where-true.
+   */
+  function parsePiecewise(): Expr {
+    const open = next(); // lbrace
+    const branches: Array<{ condition: Relation; value: Expr }> = [];
+    let fallback: Expr | undefined;
+    for (;;) {
+      const item = parseRelation();
+      if (at('colon')) {
+        next();
+        if (item.kind !== 'relation') {
+          fail({
+            kind: 'not-a-condition',
+            message: 'Before ":" needs a condition, like {x < 0: -x}.',
+            span: item.span,
+          });
+        }
+        branches.push({ condition: item, value: parseAdd() });
+      } else if (item.kind === 'relation') {
+        // shorthand: {x > 0} = 1 where the condition holds
+        branches.push({ condition: item, value: { kind: 'num', value: 1, span: item.span } });
+      } else {
+        fallback = item;
+        if (at('comma')) {
+          fail({
+            kind: 'unexpected-token',
+            message: 'The fallback must be the last item in a piecewise.',
+            span: peek().span,
+          });
+        }
+      }
+      if (at('comma')) {
+        next();
+        continue;
+      }
+      break;
+    }
+    if (!at('rbrace')) {
+      fail({
+        kind: 'unmatched-paren',
+        message: 'This "{" is never closed.',
+        span: open.span,
+        suggestion: { label: 'Insert "}"', edit: { type: 'insert', at: source.length, text: '}' } },
+      });
+    }
+    const close = next();
+    return {
+      kind: 'piecewise',
+      branches,
+      fallback,
+      span: spanFrom(open.span, close.span),
+    };
   }
 
   function expectClose(open: Token): Token {
