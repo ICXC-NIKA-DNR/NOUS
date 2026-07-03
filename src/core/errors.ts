@@ -35,7 +35,8 @@ export type DiagnosticKind =
   | 'undefined-variable'
   | 'not-a-condition'
   | 'not-a-value'
-  | 'unterminated-abs';
+  | 'unterminated-abs'
+  | 'cas-unsupported';
 
 export interface Diagnostic {
   kind: DiagnosticKind;

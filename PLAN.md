@@ -48,7 +48,7 @@ into every plot type, data tables / discrete points, vectors + vector fields.
 **Accept:** gallery document exercising every type renders correctly; restriction
 syntax works on each; tests for the parser extensions.
 
-## M5 — CAS layer ⚠ resolve licensing first (see CLAUDE.md)
+## M5 — CAS layer *(superseded by CAS_SPEC.md — from-scratch MIT engine, no Giac)*
 `CasEngine` interface: simplify, solve, derivative, integral (def/indef), limit —
 each result available exact *and* approximate, UI toggle per result. Giac WASM
 (or chosen alternative) behind the interface, loaded in a worker so the UI never

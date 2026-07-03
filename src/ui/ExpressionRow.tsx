@@ -1,10 +1,11 @@
 // One sidebar row: text input, live KaTeX preview, per-curve color chip that
-// doubles as the visibility toggle, delete button, and structured error
-// display with one-click fixes from the core's Suggestion machinery.
-// Definition rows (`a = 1`) render a slider with editable min/max/step.
+// doubles as the visibility toggle, delete button, structured error display
+// with one-click fixes, slider rendering for definitions, and the CAS menu
+// (derivative / integral / simplify / factor / solve) routing through the
+// single CasEngine.
 
 import katex from 'katex';
-import { memo, useMemo } from 'react';
+import { memo, useMemo, useState } from 'react';
 import type { Analysis } from './analyze.ts';
 import { applyEdit, formatValue } from './analyze.ts';
 import { toTex } from './tex.ts';
@@ -22,7 +23,19 @@ export interface ExpressionEntry {
   visible: boolean;
   /** Present on definition rows; created with defaults by the slider action. */
   slider?: SliderMeta;
+  /** Transient CAS status line (solve summaries, radians reminders). */
+  note?: string;
 }
+
+export type CasAction = 'derivative' | 'integral' | 'simplify' | 'factor' | 'solve';
+
+const CAS_LABELS: Record<CasAction, string> = {
+  derivative: 'Derivative',
+  integral: 'Integral',
+  simplify: 'Simplify',
+  factor: 'Factor',
+  solve: 'Solve for x',
+};
 
 export const DEFAULT_SLIDER: SliderMeta = { min: -10, max: 10, step: 0.1 };
 
@@ -39,30 +52,31 @@ function formatSliderValue(value: number, step: number): string {
   return s === '-0' ? '0' : s;
 }
 
-// All callbacks are id-first and referentially stable in App, so memo() can
-// skip the 50+ untouched rows when one slider drags (the M3 perf gate).
 interface RowProps {
   entry: ExpressionEntry;
   analysis: Analysis;
+  precision: number;
+  casActions: readonly CasAction[];
   onChange: (id: number, source: string) => void;
   onSliderMeta: (id: number, meta: SliderMeta) => void;
   onCreateSlider: (id: number, name: string) => void;
+  onCas: (id: number, action: CasAction) => void;
   onToggle: (id: number) => void;
   onDelete: (id: number) => void;
   onEnter: () => void;
 }
 
-function MathPreview({ analysis }: { analysis: Analysis }): JSX.Element | null {
+function MathPreview({ analysis, precision }: { analysis: Analysis; precision: number }): JSX.Element | null {
   const html = useMemo(() => {
     if (analysis.kind !== 'plot' && analysis.kind !== 'value' && analysis.kind !== 'unsupported') {
       return null;
     }
     const tex =
       analysis.kind === 'value'
-        ? `${toTex(analysis.ast)} = ${formatValue(analysis.value)}`
+        ? `${toTex(analysis.ast)} = ${formatValue(analysis.value, precision)}`
         : toTex(analysis.ast);
     return katex.renderToString(tex, { throwOnError: false, output: 'html' });
-  }, [analysis]);
+  }, [analysis, precision]);
 
   if (html === null) return null;
   // KaTeX output is generated locally from our own AST — not user HTML.
@@ -121,14 +135,18 @@ function SliderControls({
 export const ExpressionRow = memo(function ExpressionRow({
   entry,
   analysis,
+  precision,
+  casActions,
   onChange,
   onSliderMeta,
   onCreateSlider,
+  onCas,
   onToggle,
   onDelete,
   onEnter,
 }: RowProps): JSX.Element {
   const id = entry.id;
+  const [menuOpen, setMenuOpen] = useState(false);
   const plottable = analysis.kind === 'plot';
   const color = curveColorVar(entry.colorIndex);
   const diagnostic = analysis.kind === 'error' ? analysis.diagnostic : null;
@@ -159,6 +177,36 @@ export const ExpressionRow = memo(function ExpressionRow({
             if (e.key === 'Enter') onEnter();
           }}
         />
+        {casActions.length > 0 && (
+          <div className="cas-anchor">
+            <button
+              type="button"
+              className="cas-button"
+              title="CAS operations"
+              aria-expanded={menuOpen}
+              onClick={() => setMenuOpen((o) => !o)}
+            >
+              ∂
+            </button>
+            {menuOpen && (
+              <div className="cas-menu" role="menu">
+                {casActions.map((action) => (
+                  <button
+                    key={action}
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setMenuOpen(false);
+                      onCas(id, action);
+                    }}
+                  >
+                    {CAS_LABELS[action]}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
         <button type="button" className="expr-delete" title="Delete" onClick={() => onDelete(id)}>
           ×
         </button>
@@ -172,7 +220,8 @@ export const ExpressionRow = memo(function ExpressionRow({
           onMeta={(meta) => onSliderMeta(id, meta)}
         />
       )}
-      <MathPreview analysis={analysis} />
+      <MathPreview analysis={analysis} precision={precision} />
+      {entry.note && <div className="expr-note">{entry.note}</div>}
       {analysis.kind === 'unsupported' && (
         <div className="expr-note">{analysis.reason}</div>
       )}

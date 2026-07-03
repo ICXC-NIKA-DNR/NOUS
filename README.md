@@ -57,6 +57,47 @@ PLAN.md        milestone plan with acceptance criteria
 CLAUDE.md      architecture spec and constraints
 ```
 
+## CAS
+
+The symbolic layer is built from scratch in TypeScript (MIT, zero external
+CAS dependencies — see `CAS_SPEC.md` for the scoping rationale):
+
+- **Differentiation** — full and exact: every builtin function, product/
+  quotient/chain rules, `f(x)^g(x)` via logarithmic differentiation.
+- **Simplification** — exact rational constant folding (bigint), like-term
+  and power collection, Pythagorean identity, radical reduction (`√8 → 2√2`).
+- **Solving** — linear and quadratic exactly (`x² = 2` → `±√2`), symbolic
+  slider coefficients in the linear case, Newton + bisection numerics for
+  everything else; results say which tier they came from.
+- **Integration** — pattern-table indefinite (power rule, trig, exp/log,
+  linear inner functions, u-substitution, fixed by-parts forms); definite
+  integrals always work via adaptive Simpson when no closed form is known.
+- **Limits** — direct substitution, L'Hôpital for 0/0 and ∞/∞ (recursion-
+  capped), one-sided, signed infinities.
+
+Use it from the `∂` menu on any expression row, or inline: `derivative(f)`,
+`integral(f)`. Every symbolic operation is property-tested against numeric
+cross-checks (central differences, quadrature, evaluate-after-simplify).
+
+CAS results use radian semantics regardless of the display angle mode.
+
+## Known limitations
+
+Deliberate scope decisions (see `CAS_SPEC.md`), not accidents:
+
+- **No general symbolic integration** (no Risch algorithm). The pattern
+  table covers what graphing-calculator users actually integrate; when
+  nothing matches, `integral(...)` says so honestly, and definite integrals
+  fall back to numerics — `∫₀¹ e^(x²) dx` still answers.
+- **No symbolic solving beyond quadratics** — higher-degree polynomials and
+  transcendental equations solve numerically (all real roots in the search
+  range), which covers the target use.
+- **No complex numbers in v1** — `x² + 1 = 0` reports two complex roots
+  exist and that they aren't displayed, rather than pretending there's no
+  answer.
+- **No matrix CAS, differential equations, or series expansions** — v2
+  candidates if the project grows.
+
 ## Input syntax
 
 Desmos-style plain text: implicit multiplication (`2xy`), `^` powers,
@@ -67,5 +108,6 @@ The spec of record is `src/core/__tests__/parser.test.ts`.
 
 ## License
 
-MIT — see `LICENSE`. Note: the planned optional CAS integration has an open
-licensing decision (Giac is GPL-3.0); see `CLAUDE.md` before bundling any CAS.
+MIT — see `LICENSE`. The CAS is built from scratch in this repo (no Giac,
+no GPL code); the licensing question that shaped that decision is documented
+in `CAS_SPEC.md`.

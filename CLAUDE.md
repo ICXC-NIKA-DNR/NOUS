@@ -57,7 +57,12 @@ start a milestone until the previous one's acceptance criteria pass.
   (`{ "format": "gcalc", "version": 1, ... }`). The share-code feature is the same
   JSON, compact-serialized + base64. One serializer, two transports.
 
-## ⚠ Open licensing decision (resolve before starting M5)
+## ⚠ Open licensing decision — RESOLVED, see CAS_SPEC.md
+
+> **Resolution (M5):** the CAS is built from scratch in TypeScript, MIT,
+> inside this repo — no Giac, no GPL code, no WASM boundary. `CAS_SPEC.md`
+> supersedes this section and PLAN.md's original M5. The text below is kept
+> for the historical record of the decision.
 
 The spec asks for Giac compiled to WASM. Giac is **GPL-3.0**; this project is
 **MIT**. Options, in rough order of preference:

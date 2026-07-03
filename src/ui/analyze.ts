@@ -8,8 +8,9 @@
 // free must be a defined slider — tracked in `deps` for dirty tracking.
 
 import type { Expr, Relation, RelOp, Restriction, Span } from '../core/ast.ts';
+import { engine } from '../cas/engine.ts';
 import { compile, compileCondition, type CompiledFn, type Env } from '../core/compile.ts';
-import { GcalcError, type Diagnostic, type Edit } from '../core/errors.ts';
+import { fail, GcalcError, type Diagnostic, type Edit } from '../core/errors.ts';
 import { evaluate, makeContext, type AngleMode, type EvalContext } from '../core/evaluator.ts';
 import { CONSTANTS, FUNCTION_NAMES } from '../core/names.ts';
 import { parse } from '../core/parser.ts';
@@ -21,7 +22,12 @@ import { parse } from '../core/parser.ts';
 export type BoundFn = (env: Env) => number;
 
 export type PlotSpec =
-  | { type: 'explicit'; f: (x: number, env: Env) => number }
+  | {
+      type: 'explicit';
+      f: (x: number, env: Env) => number;
+      /** The scalar body AST (restriction included) — the CAS menu's input. */
+      body: Expr;
+    }
   | {
       type: 'parametric';
       fx: (t: number, env: Env) => number;
@@ -67,7 +73,78 @@ export type Analysis =
 
 const RESERVED = new Set(['x', 'y', ...FUNCTION_NAMES]);
 /** Registered so the lexer keeps these words whole. */
-const EXTRA_FUNCTIONS = ['vector'];
+const EXTRA_FUNCTIONS = ['vector', 'derivative', 'integral'];
+
+/**
+ * Expand inline CAS calls — derivative(f) / derivative(f, t) and
+ * integral(f) / integral(f, t) — bottom-up, through the same engine the CAS
+ * menu uses (one code path; tested for identity). CAS semantics are
+ * radians; errors surface as structured diagnostics.
+ */
+function expandCas(e: Expr): Expr {
+  const walked = mapChildrenExpr(e, expandCas);
+  if (walked.kind !== 'call') return walked;
+  if (walked.callee !== 'derivative' && walked.callee !== 'integral') return walked;
+
+  const [body, wrtArg] = walked.args;
+  if (walked.args.length < 1 || walked.args.length > 2 || (wrtArg && wrtArg.kind !== 'ident')) {
+    fail({
+      kind: 'cas-unsupported',
+      message: `${walked.callee} takes an expression and an optional variable: ${walked.callee}(f, x).`,
+      span: walked.span,
+    });
+  }
+  const wrt = wrtArg && wrtArg.kind === 'ident' ? wrtArg.name : 'x';
+
+  if (walked.callee === 'derivative') return engine.differentiate(body, wrt);
+
+  const anti = engine.integrate(body, wrt);
+  if (anti === null) {
+    fail({
+      kind: 'cas-unsupported',
+      message: 'No closed-form antiderivative found. (Definite integrals always work numerically.)',
+      span: walked.span,
+    });
+  }
+  return anti;
+}
+
+function mapChildrenExpr(e: Expr, f: (c: Expr) => Expr): Expr {
+  switch (e.kind) {
+    case 'num':
+    case 'ident':
+      return e;
+    case 'unary':
+      return { ...e, operand: f(e.operand) };
+    case 'binary':
+      return { ...e, left: f(e.left), right: f(e.right) };
+    case 'postfix':
+      return { ...e, operand: f(e.operand) };
+    case 'call':
+      return { ...e, args: e.args.map(f) };
+    case 'relation':
+      return { ...e, operands: e.operands.map(f) };
+    case 'restriction':
+      return {
+        ...e,
+        body: f(e.body),
+        conditions: e.conditions.map((c) => f(c) as typeof c),
+      };
+    case 'piecewise':
+      return {
+        ...e,
+        branches: e.branches.map((b) => ({
+          condition: f(b.condition) as typeof b.condition,
+          value: f(b.value),
+        })),
+        fallback: e.fallback ? f(e.fallback) : undefined,
+      };
+    case 'point':
+      return { ...e, x: f(e.x), y: f(e.y) };
+    case 'list':
+      return { ...e, items: e.items.map(f) };
+  }
+}
 
 /** Conjunction of restriction conditions as an env predicate. */
 function makeGate(conditions: Relation[], angleMode: AngleMode): (env: Env) => boolean {
@@ -203,7 +280,7 @@ export function analyze(
 
   let ast: Expr;
   try {
-    ast = parse(source, { functionNames: EXTRA_FUNCTIONS });
+    ast = expandCas(parse(source, { functionNames: EXTRA_FUNCTIONS }));
   } catch (e) {
     if (e instanceof GcalcError) return { kind: 'error', diagnostic: e.info };
     throw e;
@@ -289,13 +366,15 @@ function classify(ast: Expr, angleMode: AngleMode, defined: ReadonlySet<string>)
       if (body !== null) {
         const deps = requireDeps(['x', 'y']);
         if (!Array.isArray(deps)) return deps as Analysis;
-        const compiled = compile(withRestriction(body), opts);
+        const restricted = withRestriction(body);
+        const compiled = compile(restricted, opts);
         return {
           kind: 'plot',
           ast,
           deps,
           spec: {
             type: 'explicit',
+            body: restricted,
             f: (x, env) => {
               env.x = x;
               return compiled(env);
@@ -523,13 +602,15 @@ function classify(ast: Expr, angleMode: AngleMode, defined: ReadonlySet<string>)
   // Bare expression in x (and sliders) → y = expr, Desmos-style.
   const deps = requireDeps(['x']);
   if (!Array.isArray(deps)) return deps as Analysis;
-  const compiled = compile(withRestriction(core), opts);
+  const restricted = withRestriction(core);
+  const compiled = compile(restricted, opts);
   return {
     kind: 'plot',
     ast,
     deps,
     spec: {
       type: 'explicit',
+      body: restricted,
       f: (x, env) => {
         env.x = x;
         return compiled(env);
