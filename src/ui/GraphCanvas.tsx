@@ -245,15 +245,21 @@ function fmtCoord(x: number, y: number, precision: number): string {
   return `(${formatValue(x, precision)}, ${formatValue(y, precision)})`;
 }
 
+const POI_LABEL_NEAR_PX = 34;
+
+/**
+ * Special points as subtle dots always; a coordinate label only when it
+ * won't clutter — intersections (few, meaningful) get one always; roots and
+ * extrema reveal theirs when the cursor is near (Desmos-style), so a busy
+ * curve like sin(x) isn't buried in permanent labels.
+ */
 function drawPois(
   ctx: CanvasRenderingContext2D,
   pois: Poi[],
   vp: Viewport,
   precision: number,
+  hover: HoverState | null,
 ): void {
-  // Too many at once turns into visual noise: draw dots always, labels only
-  // when the set is small enough to read.
-  const label = pois.length <= 24;
   for (const poi of pois) {
     const px = xToPx(vp, poi.x);
     const py = yToPx(vp, poi.y);
@@ -267,9 +273,9 @@ function drawPois(
     ctx.beginPath();
     ctx.arc(px, py, 3, 0, 2 * Math.PI);
     ctx.fill();
-    if (label) {
-      const tag =
-        poi.kind === 'min' ? 'min ' : poi.kind === 'max' ? 'max ' : '';
+    const near = hover !== null && Math.hypot(hover.sx - px, hover.sy - py) <= POI_LABEL_NEAR_PX;
+    if (intersection || near) {
+      const tag = poi.kind === 'min' ? 'min ' : poi.kind === 'max' ? 'max ' : '';
       drawLabel(ctx, `${tag}${fmtCoord(poi.x, poi.y, precision)}`, px, py, vp);
     }
   }
@@ -303,11 +309,21 @@ interface PointerState {
   travel: number;
 }
 
-/** Marker + label info the overlay draws. */
+/** Pinned inspect marker (set by a click). */
 interface InspectState {
   wx: number;
   wy: number;
   color: string;
+}
+
+/** Live hover readout: the snapped curve point plus the raw cursor position
+ * (used to reveal nearby POI labels). */
+interface HoverState {
+  wx: number;
+  wy: number;
+  color: string;
+  sx: number;
+  sy: number;
 }
 
 /** Numerically invert fx(slider) = targetX by bisection over [min, max].
@@ -400,6 +416,7 @@ export function GraphCanvas({
   const [showGrid, setShowGrid] = useState(true);
   const [pois, setPois] = useState<Poi[] | null>(null);
   const [inspect, setInspect] = useState<InspectState | null>(null);
+  const [hover, setHover] = useState<HoverState | null>(null);
   const pointerState = useRef<PointerState>({
     pointers: new Map(),
     pinchDist: 0,
@@ -549,7 +566,7 @@ export function GraphCanvas({
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, viewport.width, viewport.height);
 
-    if (pois) drawPois(ctx, pois, viewport, precision);
+    if (pois) drawPois(ctx, pois, viewport, precision, hover);
 
     for (const point of dragPoints) {
       const screen = dragPointScreen(point, env, viewport);
@@ -564,22 +581,71 @@ export function GraphCanvas({
       ctx.fill();
     }
 
-    if (inspect) {
-      const px = xToPx(viewport, inspect.wx);
-      const py = yToPx(viewport, inspect.wy);
-      ctx.strokeStyle = inspect.color;
+    // Hover readout: a hollow ring tracking the curve under the cursor.
+    if (hover && (!inspect || hover.wx !== inspect.wx || hover.wy !== inspect.wy)) {
+      const px = xToPx(viewport, hover.wx);
+      const py = yToPx(viewport, hover.wy);
+      ctx.strokeStyle = hover.color;
       ctx.fillStyle = OVERLAY.poiDim;
       ctx.lineWidth = 2;
       ctx.beginPath();
       ctx.arc(px, py, 5, 0, 2 * Math.PI);
       ctx.fill();
       ctx.stroke();
+      drawLabel(ctx, fmtCoord(hover.wx, hover.wy, precision), px, py, viewport);
+    }
+
+    // Pinned inspect marker (filled).
+    if (inspect) {
+      const px = xToPx(viewport, inspect.wx);
+      const py = yToPx(viewport, inspect.wy);
+      ctx.fillStyle = inspect.color;
+      ctx.beginPath();
+      ctx.arc(px, py, 5, 0, 2 * Math.PI);
+      ctx.fill();
       drawLabel(ctx, fmtCoord(inspect.wx, inspect.wy, precision), px, py, viewport);
     }
-  }, [viewport, pois, dragPoints, env, inspect, precision]);
+  }, [viewport, pois, dragPoints, env, inspect, hover, precision]);
+
+  // Nearest curve point (snapping to a POI) under a screen position, or null.
+  const pickNearest = useCallback((sx: number, sy: number): HoverState | null => {
+    const { curves: liveCurves, env: liveEnv, viewport: vp, pois: livePois } = liveRef.current;
+    if (!vp) return null;
+    let best: HoverState | null = null;
+    let bestDist = SNAP_PX;
+    for (const poi of livePois ?? []) {
+      const d = Math.hypot(xToPx(vp, poi.x) - sx, yToPx(vp, poi.y) - sy);
+      if (d < bestDist) {
+        best = { wx: poi.x, wy: poi.y, color: colorForCurve(liveCurves, poi.curveIds[0]), sx, sy };
+        bestDist = d;
+      }
+    }
+    if (best === null) {
+      bestDist = CURVE_PICK_PX;
+      const wx = pxToX(vp, sx);
+      for (const c of liveCurves) {
+        if (c.spec.type !== 'explicit') continue;
+        const wy = c.spec.f(wx, liveEnv);
+        if (!Number.isFinite(wy)) continue;
+        const d = Math.abs(yToPx(vp, wy) - sy);
+        if (d < bestDist) {
+          best = { wx, wy, color: c.color, sx, sy };
+          bestDist = d;
+        }
+      }
+    }
+    return best;
+  }, []);
 
   const onPointerDown = useCallback((e: React.PointerEvent<HTMLCanvasElement>) => {
-    e.currentTarget.setPointerCapture(e.pointerId);
+    // A synthetic/uncaptured pointer id throws here; don't let that abort the
+    // handler (breaks click + drag).
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch {
+      /* no active pointer to capture — fine */
+    }
+    setHover(null); // hide the hover readout while interacting
     const st = pointerState.current;
     const pos = { x: e.nativeEvent.offsetX, y: e.nativeEvent.offsetY };
     st.pointers.set(e.pointerId, pos);
@@ -610,8 +676,13 @@ export function GraphCanvas({
   const onPointerMove = useCallback((e: React.PointerEvent<HTMLCanvasElement>) => {
     const st = pointerState.current;
     const prev = st.pointers.get(e.pointerId);
-    if (!prev) return;
     const pos = { x: e.nativeEvent.offsetX, y: e.nativeEvent.offsetY };
+
+    // No button down → hover: show the live value readout under the cursor.
+    if (!prev) {
+      if (st.pointers.size === 0) setHover(pickNearest(pos.x, pos.y));
+      return;
+    }
     st.pointers.set(e.pointerId, pos);
 
     if (st.pointers.size === 2) {
@@ -646,7 +717,7 @@ export function GraphCanvas({
     }
 
     setViewport((vp) => (vp ? pan(vp, pos.x - prev.x, pos.y - prev.y) : vp));
-  }, [onDragSlider]);
+  }, [onDragSlider, pickNearest]);
 
   const onPointerUp = useCallback((e: React.PointerEvent<HTMLCanvasElement>) => {
     const st = pointerState.current;
@@ -655,39 +726,13 @@ export function GraphCanvas({
     st.pinchDist = 0;
     if (!wasPrimary || st.mode !== 'pan' || st.travel > CLICK_TRAVEL_PX) return;
 
-    // A click (not a drag): inspect the nearest curve, snapping to a POI.
-    const { curves: liveCurves, env: liveEnv, viewport: vp, pois: livePois } = liveRef.current;
-    if (!vp) return;
-    const sx = st.downX;
-    const sy = st.downY;
+    // A click (not a drag) pins the nearest curve point as an inspect marker.
+    const near = pickNearest(st.downX, st.downY);
+    setInspect(near ? { wx: near.wx, wy: near.wy, color: near.color } : null);
+  }, [pickNearest]);
 
-    let best: InspectState | null = null;
-    let bestDist = SNAP_PX;
-    if (livePois) {
-      for (const poi of livePois) {
-        const d = Math.hypot(xToPx(vp, poi.x) - sx, yToPx(vp, poi.y) - sy);
-        if (d < bestDist) {
-          const color = colorForCurve(liveCurves, poi.curveIds[0]);
-          best = { wx: poi.x, wy: poi.y, color };
-          bestDist = d;
-        }
-      }
-    }
-    if (best === null) {
-      bestDist = CURVE_PICK_PX;
-      const wx = pxToX(vp, sx);
-      for (const c of liveCurves) {
-        if (c.spec.type !== 'explicit') continue;
-        const wy = c.spec.f(wx, liveEnv);
-        if (!Number.isFinite(wy)) continue;
-        const d = Math.abs(yToPx(vp, wy) - sy);
-        if (d < bestDist) {
-          best = { wx, wy, color: c.color };
-          bestDist = d;
-        }
-      }
-    }
-    setInspect(best);
+  const onPointerLeave = useCallback(() => {
+    if (pointerState.current.pointers.size === 0) setHover(null);
   }, []);
 
   // Wheel zoom, centered on the cursor. Native listener: React's onWheel is
@@ -720,6 +765,7 @@ export function GraphCanvas({
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
         onPointerCancel={onPointerUp}
+        onPointerLeave={onPointerLeave}
       />
       <div className="graph-controls">
         <button
