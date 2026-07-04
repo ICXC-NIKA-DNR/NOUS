@@ -59,7 +59,7 @@ everywhere.
 **Accept:** `solve(x^2 = 2)` shows `±√2` exact and `±1.41421…` approx at the
 configured precision; long CAS calls don't freeze the UI; angle mode respected.
 
-## M6 — Graph intelligence & interaction
+## M6 — Graph intelligence & interaction *(done)*
 Click-on-curve shows coordinates; automatic detection + labels for roots,
 extrema, intersections (systems of equations get intersection points plotted);
 draggable points that snap to and slide along a curve with dependent expressions
@@ -106,6 +106,14 @@ App icon + window/taskbar branding. Verify pastel palette under CVD simulation
 and adjust. CONTRIBUTING.md finalized, README build steps re-verified from a
 clean clone on at least two OSes, MIT licensing audit (esp. the CAS boundary),
 CI running `npm test` on push.
+
+Known UI polish to verify here:
+- Sidebar `<select>` (precision dropdown) dropdown arrow renders in
+  WebKitGTK's light-theme color inside the real Tauri window, despite
+  `color-scheme: dark` being set on `:root` in `src/styles.css` — doesn't
+  show up in the Chromium preview, only the actual desktop app. Re-check
+  after the color-scheme fix (added 2026-07-03) and either confirm resolved
+  or add a custom-rendered dropdown (`appearance: none` + an SVG chevron).
 
 **Accept:** clean-clone build works by following README alone; CI green; v0.1.0
 tag.

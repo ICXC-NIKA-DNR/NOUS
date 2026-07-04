@@ -27,7 +27,15 @@ export interface ExpressionEntry {
   note?: string;
 }
 
-export type CasAction = 'derivative' | 'integral' | 'simplify' | 'factor' | 'solve';
+export type CasAction =
+  | 'derivative'
+  | 'integral'
+  | 'simplify'
+  | 'factor'
+  | 'solve'
+  | 'fitLinear'
+  | 'fitQuadratic'
+  | 'fitExp';
 
 const CAS_LABELS: Record<CasAction, string> = {
   derivative: 'Derivative',
@@ -35,6 +43,9 @@ const CAS_LABELS: Record<CasAction, string> = {
   simplify: 'Simplify',
   factor: 'Factor',
   solve: 'Solve for x',
+  fitLinear: 'Fit: linear',
+  fitQuadratic: 'Fit: quadratic',
+  fitExp: 'Fit: exponential',
 };
 
 export const DEFAULT_SLIDER: SliderMeta = { min: -10, max: 10, step: 0.1 };

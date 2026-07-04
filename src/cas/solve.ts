@@ -211,7 +211,10 @@ const SAMPLE_RANGES: Array<[number, number, number]> = [
   [-1000, 1000, 8000],
 ];
 
-function newtonBisect(
+/** Polish a bracketed root: Newton steps (when fp cooperates and stays in
+ * the bracket) with bisection as the safety net. Exported for the plot
+ * layer's viewport-scoped root finding (M6 points of interest). */
+export function newtonBisect(
   f: (x: number) => number,
   fp: ((x: number) => number) | null,
   lo: number,

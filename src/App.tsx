@@ -7,7 +7,7 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { engine } from './cas/engine.ts';
 import type { Expr, Relation } from './core/ast.ts';
-import type { Env } from './core/compile.ts';
+import { compile, type Env } from './core/compile.ts';
 import { GcalcError } from './core/errors.ts';
 import type { AngleMode } from './core/evaluator.ts';
 import { analyze, definitionName, formatValue, type Analysis } from './ui/analyze.ts';
@@ -19,9 +19,34 @@ import {
   type ExpressionEntry,
   type SliderMeta,
 } from './ui/ExpressionRow.tsx';
-import { GraphCanvas, type PlottedCurve } from './ui/GraphCanvas.tsx';
+import { expFit, linearFit, polyFit } from './plot/regress.ts';
+import { GraphCanvas, type DragPoint, type PlottedCurve } from './ui/GraphCanvas.tsx';
 import { galleryEntries, PerfHud, perfEntries, usePerfAnimation } from './ui/perf.tsx';
 import { toSource } from './ui/toSource.ts';
+
+// Symbolic derivative of an explicit curve body, compiled for POI detection.
+// Cached by body AST identity (analyses are cached by source, so the AST is
+// stable across renders). Radian semantics only — in degree mode the POI
+// engine's central-difference fallback stays correct without the π/180 factor
+// the symbolic form would need. null = not differentiable (e.g. floor).
+const derivCache = new WeakMap<Expr, ((x: number, env: Env) => number) | null>();
+
+function derivativeOf(body: Expr): ((x: number, env: Env) => number) | undefined {
+  if (!derivCache.has(body)) {
+    let fn: ((x: number, env: Env) => number) | null = null;
+    try {
+      const compiled = compile(engine.differentiate(body, 'x'), { angleMode: 'radians' });
+      fn = (x, env) => {
+        env.x = x;
+        return compiled(env);
+      };
+    } catch {
+      fn = null;
+    }
+    derivCache.set(body, fn);
+  }
+  return derivCache.get(body) ?? undefined;
+}
 
 let nextId = 1;
 let nextColor = 0;
@@ -40,6 +65,7 @@ const EMPTY_ANALYSIS: Analysis = { kind: 'empty' };
 const NO_ACTIONS: readonly CasAction[] = [];
 const SCALAR_ACTIONS: readonly CasAction[] = ['derivative', 'integral', 'simplify', 'factor'];
 const EQUATION_ACTIONS: readonly CasAction[] = ['solve'];
+const TABLE_ACTIONS: readonly CasAction[] = ['fitLinear', 'fitQuadratic', 'fitExp'];
 
 /** The scalar AST a CAS action operates on, or null. */
 function casBody(a: Analysis | undefined): Expr | null {
@@ -47,6 +73,20 @@ function casBody(a: Analysis | undefined): Expr | null {
   if (a.kind === 'value') return a.ast;
   if (a.kind === 'plot' && a.spec.type === 'explicit') return a.spec.body;
   return null;
+}
+
+/** A literal data table's points (≥2, no slider deps), or null. */
+function dataTablePoints(a: Analysis | undefined): Array<{ x: number; y: number }> | null {
+  if (a === undefined || a.kind !== 'plot' || a.spec.type !== 'points') return null;
+  if (a.spec.pts.length < 2 || a.deps.length > 0) return null;
+  const pts: Array<{ x: number; y: number }> = [];
+  for (const p of a.spec.pts) {
+    const x = p.fx({});
+    const y = p.fy({});
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+    pts.push({ x, y });
+  }
+  return pts;
 }
 
 /** The single-'=' relation a solve action targets, or null. */
@@ -114,11 +154,39 @@ export function App(): JSX.Element {
           spec: a.spec,
           fingerprint: a.deps.map((n) => env[n]).join(','),
           color: cssColor(entry.colorIndex),
+          fPrime:
+            angleMode === 'radians' && a.spec.type === 'explicit'
+              ? derivativeOf(a.spec.body)
+              : undefined,
         });
       }
     }
     return out;
-  }, [entries, analyses, env]);
+  }, [entries, analyses, env, angleMode]);
+
+  // Points bound to exactly one slider are draggable along their path. The
+  // defining slider's meta gives the range/step the drag snaps to.
+  const dragPoints = useMemo(() => {
+    const out: DragPoint[] = [];
+    for (const entry of entries) {
+      const a = analyses.get(entry.id);
+      if (!entry.visible || a?.kind !== 'plot' || a.spec.type !== 'points') continue;
+      if (a.spec.pts.length !== 1 || a.deps.length !== 1) continue;
+      const name = a.deps[0];
+      const owner = entries.find((e) => definitionName(e.source) === name);
+      const meta = owner?.slider ?? DEFAULT_SLIDER;
+      out.push({
+        id: entry.id,
+        name,
+        min: meta.min,
+        max: meta.max,
+        step: meta.step,
+        fx: a.spec.pts[0].fx,
+        fy: a.spec.pts[0].fy,
+      });
+    }
+    return out;
+  }, [entries, analyses]);
 
   // Row callbacks must be referentially stable or ExpressionRow's memo()
   // can't skip untouched rows — that skip is most of the M3 perf gate. A
@@ -134,6 +202,19 @@ export function App(): JSX.Element {
 
   const onSliderMeta = useCallback((id: number, slider: SliderMeta): void => {
     setEntries((es) => es.map((e) => (e.id === id ? { ...e, slider } : e)));
+  }, []);
+
+  /** A curve-bound-point drag rewrites the driving slider's definition row —
+   * the same path a slider drag takes, so dependent curves update live. */
+  const onDragSlider = useCallback((name: string, value: number, step: number): void => {
+    const decimals = Math.max(0, Math.min(10, -Math.floor(Math.log10(step) + 1e-9)));
+    const text = value.toFixed(decimals);
+    const formatted = text === '-0' ? '0' : text;
+    setEntries((es) =>
+      es.map((e) =>
+        definitionName(e.source) === name ? { ...e, source: `${name} = ${formatted}` } : e,
+      ),
+    );
   }, []);
 
   const onToggle = useCallback((id: number): void => {
@@ -183,6 +264,40 @@ export function App(): JSX.Element {
     };
 
     try {
+      if (action === 'fitLinear' || action === 'fitQuadratic' || action === 'fitExp') {
+        const pts = dataTablePoints(a);
+        if (pts === null) return;
+        const p = precisionRef.current;
+        const fmt = (v: number): string => formatValue(v, p);
+        if (action === 'fitLinear') {
+          const fit = linearFit(pts);
+          if (fit === null) {
+            setNote('Linear fit needs 2+ non-vertical points.');
+            return;
+          }
+          insertAfter([`y = ${fmt(fit.m)} x + ${fmt(fit.b)}`]);
+          setNote(`linear fit · r² = ${fmt(fit.r2)}`);
+        } else if (action === 'fitQuadratic') {
+          const fit = polyFit(pts, 2);
+          if (fit === null) {
+            setNote('Quadratic fit needs 3+ points.');
+            return;
+          }
+          const [c0, c1, c2] = fit.coeffs;
+          insertAfter([`y = ${fmt(c2)} x^2 + ${fmt(c1)} x + ${fmt(c0)}`]);
+          setNote(`quadratic fit · r² = ${fmt(fit.r2)}`);
+        } else {
+          const fit = expFit(pts);
+          if (fit === null) {
+            setNote('Exponential fit needs 2+ points with positive y.');
+            return;
+          }
+          insertAfter([`y = ${fmt(fit.a)} e^(${fmt(fit.b)} x)`]);
+          setNote(`exponential fit · r² = ${fmt(fit.r2)}`);
+        }
+        return;
+      }
+
       if (action === 'solve') {
         const target = solveTarget(a);
         if (target === null) return;
@@ -302,7 +417,9 @@ export function App(): JSX.Element {
                 ? SCALAR_ACTIONS
                 : solveTarget(a) !== null
                   ? EQUATION_ACTIONS
-                  : NO_ACTIONS;
+                  : dataTablePoints(a) !== null
+                    ? TABLE_ACTIONS
+                    : NO_ACTIONS;
             return (
               <ExpressionRow
                 key={entry.id}
@@ -326,7 +443,14 @@ export function App(): JSX.Element {
         </button>
       </aside>
       <main className="canvas-area">
-        <GraphCanvas curves={curves} env={env} onFrame={onFrame} />
+        <GraphCanvas
+          curves={curves}
+          env={env}
+          dragPoints={dragPoints}
+          precision={precision}
+          onDragSlider={onDragSlider}
+          onFrame={onFrame}
+        />
         <PerfHud hudRef={hudRef} toggle={toggle} />
       </main>
     </div>

@@ -1,5 +1,10 @@
 /* Dark mode is the only theme (see CLAUDE.md). Charcoal, not pure black. */
 :root {
+  /* Tells the engine to render native widgets (select arrows, scrollbars,
+     etc.) in their dark variant — without this WebKitGTK draws the <select>
+     dropdown arrow in its light-theme color regardless of our own CSS. */
+  color-scheme: dark;
+
   --bg: #1b1d21;
   --bg-raised: #232529;
   --bg-input: #2a2d33;
