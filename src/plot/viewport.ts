@@ -79,12 +79,28 @@ export function zoomAt(vp: Viewport, px: number, py: number, factor: number): Vi
   };
 }
 
-/** Re-target the viewport to a new canvas size, keeping xMin/xMax and the
- * world-per-pixel scale of y anchored at the vertical center. */
+/**
+ * Re-target the viewport to a new canvas size, preserving the world-per-pixel
+ * scale on BOTH axes about the view centre. Resizing the window therefore
+ * reveals more (or less) area at the same zoom instead of stretching the
+ * graph — square units stay square, the way Desmos behaves. (Preserving the
+ * x *range* while only y tracked pixels — the previous behaviour — skewed the
+ * aspect ratio on every horizontal resize.)
+ */
 export function resize(vp: Viewport, width: number, height: number): Viewport {
   if (vp.width === width && vp.height === height) return vp;
+  const xPerPx = (vp.xMax - vp.xMin) / vp.width;
   const yPerPx = (vp.yMax - vp.yMin) / vp.height;
+  const xMid = (vp.xMin + vp.xMax) / 2;
   const yMid = (vp.yMin + vp.yMax) / 2;
+  const xSpan = xPerPx * width;
   const ySpan = yPerPx * height;
-  return { xMin: vp.xMin, xMax: vp.xMax, yMin: yMid - ySpan / 2, yMax: yMid + ySpan / 2, width, height };
+  return {
+    xMin: xMid - xSpan / 2,
+    xMax: xMid + xSpan / 2,
+    yMin: yMid - ySpan / 2,
+    yMax: yMid + ySpan / 2,
+    width,
+    height,
+  };
 }

@@ -62,10 +62,25 @@ test('zoomAt refuses to zoom past precision limits', () => {
   assert.equal(zoomAt(huge, 400, 200, 2), huge);
 });
 
-test('resize keeps x range and y scale', () => {
-  const r = resize(vp, 800, 800);
-  assert.equal(r.xMin, -10);
-  assert.equal(r.xMax, 10);
-  assert.ok(Math.abs(r.yMax - r.yMin - 20) < 1e-12); // same world-per-px
-  assert.ok(Math.abs(r.yMin + r.yMax) < 1e-12); // still centered
+test('resize preserves world-per-pixel on both axes and the centre', () => {
+  // vp: x∈[-10,10] over 800px (0.025/px), y∈[-5,5] over 400px (0.025/px).
+  const xPerPx = (vp.xMax - vp.xMin) / vp.width;
+  const yPerPx = (vp.yMax - vp.yMin) / vp.height;
+  const r = resize(vp, 1600, 800);
+  // Same scale on both axes → no aspect skew; more area revealed, not stretched.
+  assert.ok(Math.abs((r.xMax - r.xMin) / r.width - xPerPx) < 1e-12);
+  assert.ok(Math.abs((r.yMax - r.yMin) / r.height - yPerPx) < 1e-12);
+  // Centre held.
+  assert.ok(Math.abs((r.xMin + r.xMax) / 2 - 0) < 1e-12);
+  assert.ok(Math.abs((r.yMin + r.yMax) / 2 - 0) < 1e-12);
+  // Doubling width at fixed scale doubles the visible x-span.
+  assert.ok(Math.abs(r.xMax - r.xMin - 40) < 1e-12);
+});
+
+test('resize keeps square units square', () => {
+  const square = defaultViewport(800, 400); // square by construction
+  const r = resize(square, 500, 900);
+  const xPerPx = (r.xMax - r.xMin) / r.width;
+  const yPerPx = (r.yMax - r.yMin) / r.height;
+  assert.ok(Math.abs(xPerPx - yPerPx) < 1e-12);
 });

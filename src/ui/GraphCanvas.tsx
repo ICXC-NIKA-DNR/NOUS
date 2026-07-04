@@ -9,17 +9,24 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { CompiledFn, Env } from '../core/compile.ts';
+import {
+  analyzeCurves,
+  type AnalyzedCurve,
+  type Coincidence,
+  type ExactOrApprox,
+  type Feature,
+} from '../plot/analysis.ts';
 import { contour, regionMask, type RegionMask } from '../plot/implicit.ts';
 import { drawArrow, drawVectorField, drawWorldPoint } from '../plot/marks.ts';
 import { sampleParametric } from '../plot/parametric.ts';
-import { collectPois, type Poi, type PoiCurve } from '../plot/poi.ts';
 import { drawCurve, drawGrid, drawRegion, type Theme } from '../plot/render.ts';
+import { toSource } from './toSource.ts';
 import { sampleCurve, type Segment } from '../plot/sampler.ts';
+import { numericSlope, traceAt, type TracePoint } from '../plot/trace.ts';
 import {
   defaultViewport,
   pan,
   pxToX,
-  pxToY,
   resize,
   xToPx,
   yToPx,
@@ -190,8 +197,7 @@ const OVERLAY = {
 // Interaction thresholds (CSS px).
 const HANDLE_HIT_PX = 12; // grab radius for a drag handle
 const CLICK_TRAVEL_PX = 5; // max pointer travel still counted as a click
-const SNAP_PX = 16; // click snaps to a POI within this
-const CURVE_PICK_PX = 14; // else inspects a curve within this
+const CURVE_PICK_PX = 14; // trace snaps to a curve within this vertical distance
 
 function colorForCurve(curves: PlottedCurve[], id: number): string {
   return curves.find((c) => c.id === id)?.color ?? OVERLAY.poi;
@@ -241,30 +247,177 @@ function drawLabel(
   ctx.fillText(text, bx + padX, by + h / 2 + 0.5);
 }
 
+/** A multi-line tooltip anchored near (px, py), kept on-screen. Used for the
+ * trace readout (coordinates + slope, or a discontinuity label). */
+function drawTooltip(
+  ctx: CanvasRenderingContext2D,
+  lines: string[],
+  px: number,
+  py: number,
+  vp: Viewport,
+): void {
+  ctx.font = `${OVERLAY.fontPx}px ${OVERLAY.fontFamily}`;
+  const padX = 6;
+  const padY = 4;
+  const lineH = OVERLAY.fontPx + 3;
+  const w = Math.max(...lines.map((l) => ctx.measureText(l).width)) + padX * 2;
+  const h = lines.length * lineH + padY * 2 - 3;
+  let bx = px + 10;
+  let by = py - h - 8;
+  if (bx + w > vp.width) bx = px - w - 10;
+  if (by < 0) by = py + 10;
+  bx = Math.max(2, Math.min(bx, vp.width - w - 2));
+  by = Math.max(2, Math.min(by, vp.height - h - 2));
+  ctx.fillStyle = OVERLAY.labelBg;
+  const r = 5;
+  ctx.beginPath();
+  ctx.moveTo(bx + r, by);
+  ctx.arcTo(bx + w, by, bx + w, by + h, r);
+  ctx.arcTo(bx + w, by + h, bx, by + h, r);
+  ctx.arcTo(bx, by + h, bx, by, r);
+  ctx.arcTo(bx, by, bx + w, by, r);
+  ctx.closePath();
+  ctx.fill();
+  ctx.fillStyle = OVERLAY.label;
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'top';
+  lines.forEach((line, i) => ctx.fillText(line, bx + padX, by + padY + i * lineH));
+}
+
+/** Human-readable tooltip lines for a traced point. */
+function traceTooltipLines(tp: TracePoint, precision: number): string[] {
+  switch (tp.kind) {
+    case 'point':
+      return [
+        fmtCoord(tp.x, tp.y, precision),
+        `slope ${formatValue(tp.slope, precision)}`,
+      ];
+    case 'hole':
+      return [
+        `x = ${formatValue(tp.x, precision)}`,
+        'removable hole',
+        tp.limit !== undefined ? `limit → ${formatValue(tp.limit, precision)}` : 'no limit',
+      ];
+    case 'jump':
+      return [`x = ${formatValue(tp.x, precision)}`, 'jump discontinuity'];
+    case 'asymptote':
+      return [`x = ${formatValue(tp.x, precision)}`, 'vertical asymptote'];
+    case 'boundary':
+      return [`x = ${formatValue(tp.x, precision)}`, 'domain boundary'];
+    case 'none':
+      return [`x = ${formatValue(tp.x, precision)}`, 'undefined'];
+  }
+}
+
+/** Draw a trace: a marker appropriate to the point's kind plus its tooltip.
+ * `pinned` fills the marker (persisted) vs a hollow ring (live). */
+function drawTrace(
+  ctx: CanvasRenderingContext2D,
+  trace: TraceState,
+  vp: Viewport,
+  precision: number,
+  pinned: boolean,
+): void {
+  const tp = trace.point;
+  const px = xToPx(vp, tp.x);
+  const lines = traceTooltipLines(tp, precision);
+
+  if (tp.kind === 'point') {
+    const py = yToPx(vp, tp.y);
+    ctx.fillStyle = pinned ? trace.color : OVERLAY.poiDim;
+    ctx.strokeStyle = trace.color;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(px, py, 5, 0, 2 * Math.PI);
+    ctx.fill();
+    if (!pinned) ctx.stroke();
+    drawTooltip(ctx, lines, px, py, vp);
+    return;
+  }
+
+  // A break in the curve: draw a distinct indicator rather than a value point.
+  if (tp.kind === 'asymptote') {
+    ctx.strokeStyle = trace.color;
+    ctx.lineWidth = 1.25;
+    ctx.setLineDash([5, 5]);
+    ctx.beginPath();
+    ctx.moveTo(px, 0);
+    ctx.lineTo(px, vp.height);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  } else if (tp.kind === 'hole' && tp.limit !== undefined) {
+    // Hollow ring at the missing value — the classic "open dot".
+    const py = yToPx(vp, tp.limit);
+    ctx.strokeStyle = trace.color;
+    ctx.fillStyle = OVERLAY.poiDim;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(px, py, 5, 0, 2 * Math.PI);
+    ctx.fill();
+    ctx.stroke();
+  } else {
+    // jump / boundary / none: an × at the cursor height.
+    ctx.strokeStyle = trace.color;
+    ctx.lineWidth = 2;
+    const s = 5;
+    ctx.beginPath();
+    ctx.moveTo(px - s, trace.sy - s);
+    ctx.lineTo(px + s, trace.sy + s);
+    ctx.moveTo(px + s, trace.sy - s);
+    ctx.lineTo(px - s, trace.sy + s);
+    ctx.stroke();
+  }
+  drawTooltip(ctx, lines, px, trace.sy, vp);
+}
+
+/** Plain numeric coordinate, e.g. hover/trace readouts where the value is a
+ * numeric evaluation. The caller decides whether to prefix ≈. */
 function fmtCoord(x: number, y: number, precision: number): string {
   return `(${formatValue(x, precision)}, ${formatValue(y, precision)})`;
 }
 
-const POI_LABEL_NEAR_PX = 34;
+/** Light prettify for compact symbolic labels on the canvas. */
+function prettySymbol(src: string): string {
+  return src.replace(/sqrt\(/g, '√(').replace(/\bpi\b/g, 'π').replace(/\*/g, '·');
+}
+
+/** One coordinate of a feature: its compact symbolic form when exact and
+ * short, else its decimal. Never adds ≈ — the point formatter does that. */
+function fmtScalar(v: ExactOrApprox, precision: number): string {
+  if (v.exact) {
+    const sym = prettySymbol(toSource(v.expr));
+    return sym.length <= 12 ? sym : formatValue(v.value, precision);
+  }
+  return formatValue(v.value, precision);
+}
+
+/** A feature's coordinate label. Exact points render clean (0, 0); a point
+ * with any approximate coordinate wears the ≈ it earned. */
+function fmtFeature(f: Feature, precision: number): string {
+  const inner = `(${fmtScalar(f.x, precision)}, ${fmtScalar(f.y, precision)})`;
+  return f.x.exact && f.y.exact ? inner : `≈ ${inner}`;
+}
+
+const FEATURE_LABEL_NEAR_PX = 34;
 
 /**
- * Special points as subtle dots always; a coordinate label only when it
- * won't clutter — intersections (few, meaningful) get one always; roots and
- * extrema reveal theirs when the cursor is near (Desmos-style), so a busy
- * curve like sin(x) isn't buried in permanent labels.
+ * Mathematically-detected features as subtle dots; a coordinate label only
+ * where it won't clutter — intersections (few, meaningful) always; roots and
+ * extrema reveal theirs on cursor proximity, so a busy curve like sin(x)
+ * isn't buried in permanent labels.
  */
-function drawPois(
+function drawFeatures(
   ctx: CanvasRenderingContext2D,
-  pois: Poi[],
+  features: Feature[],
   vp: Viewport,
   precision: number,
-  hover: HoverState | null,
+  hoverScreen: readonly [number, number] | null,
 ): void {
-  for (const poi of pois) {
-    const px = xToPx(vp, poi.x);
-    const py = yToPx(vp, poi.y);
+  for (const feature of features) {
+    const px = xToPx(vp, feature.x.value);
+    const py = yToPx(vp, feature.y.value);
     if (px < -4 || px > vp.width + 4 || py < -4 || py > vp.height + 4) continue;
-    const intersection = poi.kind === 'intersection';
+    const intersection = feature.kind === 'intersection';
     ctx.fillStyle = OVERLAY.poiDim;
     ctx.beginPath();
     ctx.arc(px, py, 4.5, 0, 2 * Math.PI);
@@ -273,10 +426,12 @@ function drawPois(
     ctx.beginPath();
     ctx.arc(px, py, 3, 0, 2 * Math.PI);
     ctx.fill();
-    const near = hover !== null && Math.hypot(hover.sx - px, hover.sy - py) <= POI_LABEL_NEAR_PX;
+    const near =
+      hoverScreen !== null &&
+      Math.hypot(hoverScreen[0] - px, hoverScreen[1] - py) <= FEATURE_LABEL_NEAR_PX;
     if (intersection || near) {
-      const tag = poi.kind === 'min' ? 'min ' : poi.kind === 'max' ? 'max ' : '';
-      drawLabel(ctx, `${tag}${fmtCoord(poi.x, poi.y, precision)}`, px, py, vp);
+      const tag = feature.kind === 'min' ? 'min ' : feature.kind === 'max' ? 'max ' : '';
+      drawLabel(ctx, `${tag}${fmtFeature(feature, precision)}`, px, py, vp);
     }
   }
 }
@@ -301,27 +456,28 @@ interface PointerState {
   pointers: Map<number, { x: number; y: number }>;
   pinchDist: number;
   /** What the primary pointer is doing. */
-  mode: 'pan' | 'dragPoint';
+  mode: 'pan' | 'dragPoint' | 'trace';
   dragTarget: DragPoint | null;
+  /** The curve id being traced in 'trace' mode. */
+  traceCurveId: number | null;
   /** Where the primary pointer went down + total travel, for click detection. */
   downX: number;
   downY: number;
   travel: number;
 }
 
-/** Pinned inspect marker (set by a click). */
-interface InspectState {
-  wx: number;
-  wy: number;
-  color: string;
-}
+export type SlopeMode = 'numeric' | 'exact';
 
-/** Live hover readout: the snapped curve point plus the raw cursor position
- * (used to reveal nearby POI labels). */
-interface HoverState {
-  wx: number;
-  wy: number;
+/**
+ * A trace readout on a curve: the classified point (value/slope, or a
+ * hole/asymptote/boundary break) plus the owning curve's identity. Used both
+ * for the live trace under the cursor and the pinned one after release.
+ */
+interface TraceState {
+  curveId: number;
   color: string;
+  point: TracePoint;
+  /** Raw cursor screen position — anchors the tooltip and feature proximity. */
   sx: number;
   sy: number;
 }
@@ -414,14 +570,18 @@ export function GraphCanvas({
   const overlayRef = useRef<HTMLCanvasElement | null>(null);
   const [viewport, setViewport] = useState<Viewport | null>(null);
   const [showGrid, setShowGrid] = useState(true);
-  const [pois, setPois] = useState<Poi[] | null>(null);
-  const [inspect, setInspect] = useState<InspectState | null>(null);
-  const [hover, setHover] = useState<HoverState | null>(null);
+  const [features, setFeatures] = useState<Feature[] | null>(null);
+  const [coincidences, setCoincidences] = useState<Coincidence[]>([]);
+  // The live trace under the cursor, and the one pinned after release.
+  const [activeTrace, setActiveTrace] = useState<TraceState | null>(null);
+  const [pinnedTrace, setPinnedTrace] = useState<TraceState | null>(null);
+  const [slopeMode, setSlopeMode] = useState<SlopeMode>('numeric');
   const pointerState = useRef<PointerState>({
     pointers: new Map(),
     pinchDist: 0,
     mode: 'pan',
     dragTarget: null,
+    traceCurveId: null,
     downX: 0,
     downY: 0,
     travel: 0,
@@ -431,8 +591,8 @@ export function GraphCanvas({
   const staticDrawnRef = useRef<Array<[number, Artifact]>>([]);
 
   // Fresh values for pointer handlers without re-binding them.
-  const liveRef = useRef({ curves, env, dragPoints, viewport, pois });
-  liveRef.current = { curves, env, dragPoints, viewport, pois };
+  const liveRef = useRef({ curves, env, viewport, dragPoints, slopeMode });
+  liveRef.current = { curves, env, viewport, dragPoints, slopeMode };
 
   // Size to the container: measure synchronously on mount (don't wait for
   // the observer's first tick), then track resizes.
@@ -535,22 +695,31 @@ export function GraphCanvas({
     });
   }, [viewport, curves, env, onFrame]);
 
-  // POI detection: debounced so a pan/zoom/slider-drag flurry recomputes
-  // once things settle rather than every frame. Explicit curves only.
+  // Feature detection runs through the graph analysis layer (symbolic-first),
+  // debounced so a pan/zoom/slider-drag flurry recomputes once things settle
+  // rather than every frame. Explicit curves only.
   useEffect(() => {
     if (!viewport) return;
     const handle = setTimeout(() => {
-      const poiCurves: PoiCurve[] = [];
+      const analyzed: AnalyzedCurve[] = [];
       for (const c of curves) {
         if (c.spec.type !== 'explicit') continue;
         const f = c.spec.f;
-        poiCurves.push({
+        analyzed.push({
           id: c.id,
+          body: c.spec.body,
           f: (x) => f(x, env),
           fPrime: c.fPrime ? (x) => c.fPrime!(x, env) : undefined,
         });
       }
-      setPois(poiCurves.length === 0 ? null : collectPois(poiCurves, viewport.xMin, viewport.xMax));
+      if (analyzed.length === 0) {
+        setFeatures(null);
+        setCoincidences([]);
+        return;
+      }
+      const result = analyzeCurves(analyzed, viewport.xMin, viewport.xMax);
+      setFeatures(result.features.length === 0 ? null : result.features);
+      setCoincidences(result.coincidences);
     }, 200);
     return () => clearTimeout(handle);
   }, [viewport, curves, env]);
@@ -566,7 +735,26 @@ export function GraphCanvas({
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, viewport.width, viewport.height);
 
-    if (pois) drawPois(ctx, pois, viewport, precision, hover);
+    const hoverScreen: [number, number] | null = activeTrace
+      ? [activeTrace.sx, activeTrace.sy]
+      : null;
+    if (features) drawFeatures(ctx, features, viewport, precision, hoverScreen);
+
+    // Coincident curves get a badge, not a field of false intersection dots.
+    if (coincidences.length > 0) {
+      ctx.font = `12px ${OVERLAY.fontFamily}`;
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'top';
+      coincidences.forEach((c, i) => {
+        const y = 10 + i * 18;
+        ctx.fillStyle = colorForCurve(curves, c.curveIds[0]);
+        ctx.beginPath();
+        ctx.arc(16, y + 6, 4, 0, 2 * Math.PI);
+        ctx.fill();
+        ctx.fillStyle = OVERLAY.label;
+        ctx.fillText('identical graphs — infinitely many shared points', 26, y);
+      });
+    }
 
     for (const point of dragPoints) {
       const screen = dragPointScreen(point, env, viewport);
@@ -581,61 +769,73 @@ export function GraphCanvas({
       ctx.fill();
     }
 
-    // Hover readout: a hollow ring tracking the curve under the cursor.
-    if (hover && (!inspect || hover.wx !== inspect.wx || hover.wy !== inspect.wy)) {
-      const px = xToPx(viewport, hover.wx);
-      const py = yToPx(viewport, hover.wy);
-      ctx.strokeStyle = hover.color;
-      ctx.fillStyle = OVERLAY.poiDim;
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.arc(px, py, 5, 0, 2 * Math.PI);
-      ctx.fill();
-      ctx.stroke();
-      drawLabel(ctx, fmtCoord(hover.wx, hover.wy, precision), px, py, viewport);
-    }
+    // The pinned trace draws underneath the live one.
+    if (pinnedTrace) drawTrace(ctx, pinnedTrace, viewport, precision, true);
+    if (activeTrace) drawTrace(ctx, activeTrace, viewport, precision, false);
+  }, [viewport, features, coincidences, curves, dragPoints, env, pinnedTrace, activeTrace, precision]);
 
-    // Pinned inspect marker (filled).
-    if (inspect) {
-      const px = xToPx(viewport, inspect.wx);
-      const py = yToPx(viewport, inspect.wy);
-      ctx.fillStyle = inspect.color;
-      ctx.beginPath();
-      ctx.arc(px, py, 5, 0, 2 * Math.PI);
-      ctx.fill();
-      drawLabel(ctx, fmtCoord(inspect.wx, inspect.wy, precision), px, py, viewport);
-    }
-  }, [viewport, pois, dragPoints, env, inspect, hover, precision]);
-
-  // Nearest curve point (snapping to a POI) under a screen position, or null.
-  const pickNearest = useCallback((sx: number, sy: number): HoverState | null => {
-    const { curves: liveCurves, env: liveEnv, viewport: vp, pois: livePois } = liveRef.current;
-    if (!vp) return null;
-    let best: HoverState | null = null;
-    let bestDist = SNAP_PX;
-    for (const poi of livePois ?? []) {
-      const d = Math.hypot(xToPx(vp, poi.x) - sx, yToPx(vp, poi.y) - sy);
-      if (d < bestDist) {
-        best = { wx: poi.x, wy: poi.y, color: colorForCurve(liveCurves, poi.curveIds[0]), sx, sy };
-        bestDist = d;
-      }
-    }
-    if (best === null) {
-      bestDist = CURVE_PICK_PX;
+  // Trace a curve at a screen position and classify the point (value/slope,
+  // or a break) with the current slope mode. When `lockedId` is given, that
+  // curve is traced at the cursor's x regardless of proximity — so a drag
+  // across an asymptote or domain gap keeps reporting the SAME curve (and its
+  // 'asymptote'/'hole' label) rather than silently dropping the trace. With
+  // no lock, the nearest curve within the pick threshold is chosen (hover /
+  // initial press). Returns null when nothing applies.
+  const traceCurveAt = useCallback(
+    (sx: number, sy: number, lockedId?: number): TraceState | null => {
+      const { curves: liveCurves, env: liveEnv, viewport: vp, slopeMode: mode } = liveRef.current;
+      if (!vp) return null;
       const wx = pxToX(vp, sx);
-      for (const c of liveCurves) {
-        if (c.spec.type !== 'explicit') continue;
-        const wy = c.spec.f(wx, liveEnv);
-        if (!Number.isFinite(wy)) continue;
-        const d = Math.abs(yToPx(vp, wy) - sy);
-        if (d < bestDist) {
-          best = { wx, wy, color: c.color, sx, sy };
-          bestDist = d;
+
+      type Picked = {
+        id: number;
+        color: string;
+        f: (x: number) => number;
+        fPrime?: (x: number) => number;
+      };
+      const asPicked = (c: PlottedCurve): Picked | null => {
+        if (c.spec.type !== 'explicit') return null;
+        const f = c.spec.f;
+        return {
+          id: c.id,
+          color: c.color,
+          f: (x) => f(x, liveEnv),
+          fPrime: c.fPrime ? (x) => c.fPrime!(x, liveEnv) : undefined,
+        };
+      };
+
+      let picked: Picked | null = null;
+      if (lockedId !== undefined) {
+        const c = liveCurves.find((cur) => cur.id === lockedId);
+        picked = c ? asPicked(c) : null;
+      } else {
+        let bestDist = CURVE_PICK_PX;
+        for (const c of liveCurves) {
+          if (c.spec.type !== 'explicit') continue;
+          const wy = c.spec.f(wx, liveEnv);
+          if (!Number.isFinite(wy)) continue;
+          const d = Math.abs(yToPx(vp, wy) - sy);
+          if (d < bestDist) {
+            bestDist = d;
+            picked = asPicked(c);
+          }
         }
       }
-    }
-    return best;
-  }, []);
+      if (picked === null) return null;
+
+      const point = traceAt(picked.f, wx, vp.xMax - vp.xMin);
+      if (point.kind === 'point') {
+        // Exact slope on request when the CAS derivative is available, else
+        // the fast numeric central difference.
+        point.slope =
+          mode === 'exact' && picked.fPrime && Number.isFinite(picked.fPrime(wx))
+            ? picked.fPrime(wx)
+            : numericSlope(picked.f, wx, vp.xMax - vp.xMin);
+      }
+      return { curveId: picked.id, color: picked.color, point, sx, sy };
+    },
+    [],
+  );
 
   const onPointerDown = useCallback((e: React.PointerEvent<HTMLCanvasElement>) => {
     // A synthetic/uncaptured pointer id throws here; don't let that abort the
@@ -645,7 +845,6 @@ export function GraphCanvas({
     } catch {
       /* no active pointer to capture — fine */
     }
-    setHover(null); // hide the hover readout while interacting
     const st = pointerState.current;
     const pos = { x: e.nativeEvent.offsetX, y: e.nativeEvent.offsetY };
     st.pointers.set(e.pointerId, pos);
@@ -654,12 +853,14 @@ export function GraphCanvas({
       st.pinchDist = Math.hypot(a.x - b.x, a.y - b.y);
       return;
     }
-    // Primary pointer down: decide drag-a-point vs pan by hit-testing handles.
+    // Primary pointer down: drag-a-point, trace-a-curve, or pan — in that
+    // priority. Handles win over curves so a point on its curve stays draggable.
     st.downX = pos.x;
     st.downY = pos.y;
     st.travel = 0;
     st.mode = 'pan';
     st.dragTarget = null;
+    st.traceCurveId = null;
     const { dragPoints: dps, env: liveEnv, viewport: vp } = liveRef.current;
     if (vp) {
       for (const point of dps) {
@@ -667,20 +868,28 @@ export function GraphCanvas({
         if (screen && Math.hypot(screen[0] - pos.x, screen[1] - pos.y) <= HANDLE_HIT_PX) {
           st.mode = 'dragPoint';
           st.dragTarget = point;
-          break;
+          return;
         }
       }
     }
-  }, []);
+    const trace = traceCurveAt(pos.x, pos.y);
+    if (trace) {
+      st.mode = 'trace';
+      st.traceCurveId = trace.curveId;
+      setActiveTrace(trace);
+    } else {
+      setActiveTrace(null);
+    }
+  }, [traceCurveAt]);
 
   const onPointerMove = useCallback((e: React.PointerEvent<HTMLCanvasElement>) => {
     const st = pointerState.current;
     const prev = st.pointers.get(e.pointerId);
     const pos = { x: e.nativeEvent.offsetX, y: e.nativeEvent.offsetY };
 
-    // No button down → hover: show the live value readout under the cursor.
+    // No button down → hover: show the live trace readout under the cursor.
     if (!prev) {
-      if (st.pointers.size === 0) setHover(pickNearest(pos.x, pos.y));
+      if (st.pointers.size === 0) setActiveTrace(traceCurveAt(pos.x, pos.y));
       return;
     }
     st.pointers.set(e.pointerId, pos);
@@ -716,23 +925,43 @@ export function GraphCanvas({
       return;
     }
 
+    if (st.mode === 'trace') {
+      // Stay locked to the grabbed curve and evaluate at the cursor's x, so
+      // moving across a gap (asymptote/domain edge) shows that break's label
+      // and the point jumps cleanly to the next valid section past it.
+      setActiveTrace(traceCurveAt(pos.x, pos.y, st.traceCurveId ?? undefined));
+      return;
+    }
+
     setViewport((vp) => (vp ? pan(vp, pos.x - prev.x, pos.y - prev.y) : vp));
-  }, [onDragSlider, pickNearest]);
+  }, [onDragSlider, traceCurveAt]);
 
   const onPointerUp = useCallback((e: React.PointerEvent<HTMLCanvasElement>) => {
     const st = pointerState.current;
     const wasPrimary = st.pointers.has(e.pointerId) && st.pointers.size === 1;
     st.pointers.delete(e.pointerId);
     st.pinchDist = 0;
-    if (!wasPrimary || st.mode !== 'pan' || st.travel > CLICK_TRAVEL_PX) return;
+    if (!wasPrimary) return;
+    const pos = { x: e.nativeEvent.offsetX, y: e.nativeEvent.offsetY };
 
-    // A click (not a drag) pins the nearest curve point as an inspect marker.
-    const near = pickNearest(st.downX, st.downY);
-    setInspect(near ? { wx: near.wx, wy: near.wy, color: near.color } : null);
-  }, [pickNearest]);
+    if (st.mode === 'trace') {
+      // Release pins the trace where the pointer let go; the live readout
+      // clears until the next hover.
+      setPinnedTrace(traceCurveAt(pos.x, pos.y, st.traceCurveId ?? undefined));
+      setActiveTrace(null);
+      return;
+    }
+
+    // A pan that didn't move is a click: on a curve it pins a trace, on empty
+    // canvas it clears the pinned one.
+    if (st.mode === 'pan' && st.travel <= CLICK_TRAVEL_PX) {
+      const trace = traceCurveAt(st.downX, st.downY);
+      setPinnedTrace(trace); // null when clicking empty space → clears
+    }
+  }, [traceCurveAt]);
 
   const onPointerLeave = useCallback(() => {
-    if (pointerState.current.pointers.size === 0) setHover(null);
+    if (pointerState.current.pointers.size === 0) setActiveTrace(null);
   }, []);
 
   // Wheel zoom, centered on the cursor. Native listener: React's onWheel is
@@ -775,6 +1004,19 @@ export function GraphCanvas({
           onClick={() => setShowGrid((g) => !g)}
         >
           ⌗
+        </button>
+        <button
+          type="button"
+          className="slope-toggle"
+          title={
+            slopeMode === 'exact'
+              ? 'Trace slope: exact (CAS derivative). Click for numeric.'
+              : 'Trace slope: numeric. Click for exact (CAS derivative).'
+          }
+          aria-pressed={slopeMode === 'exact'}
+          onClick={() => setSlopeMode((m) => (m === 'numeric' ? 'exact' : 'numeric'))}
+        >
+          {slopeMode === 'exact' ? 'd/dx' : 'Δ'}
         </button>
         <button type="button" title="Reset view" onClick={resetView}>
           ⌂

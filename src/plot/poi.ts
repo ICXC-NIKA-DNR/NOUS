@@ -1,22 +1,12 @@
-// Points of interest for explicit curves (M6): roots, extrema, and pairwise
-// intersections, found numerically inside the visible x-range. Extrema use
-// the CAS's compiled symbolic derivative when the caller can provide one;
-// otherwise a central-difference fallback keeps everything working.
+// Numeric root and extremum finding for explicit curves — the numeric
+// fallback tier under the symbolic graph analysis layer (analysis.ts). When
+// the CAS can solve a curve exactly, analysis.ts uses that; these routines
+// cover transcendental / non-differentiable cases and supply the compiled
+// symbolic derivative for Newton polishing when one is available (CAS reuse).
 //
-// Pure module: closures in, world-coordinate POIs out. The overlay layer
-// projects and draws them.
+// Pure module: closures in, world x-coordinates out.
 
 import { newtonBisect } from '../cas/solve.ts';
-
-export type PoiKind = 'root' | 'min' | 'max' | 'intersection';
-
-export interface Poi {
-  kind: PoiKind;
-  x: number;
-  y: number;
-  /** Owning curve id, plus the second curve for intersections. */
-  curveIds: number[];
-}
 
 export interface PoiCurve {
   id: number;
@@ -81,40 +71,4 @@ export function findExtrema(
     else if (left < y && right < y) out.push({ x, y, kind: 'max' });
   }
   return out;
-}
-
-/** All POIs for a set of explicit curves over the visible x-range. */
-export function collectPois(curves: PoiCurve[], lo: number, hi: number, cap = 60): Poi[] {
-  const pois: Poi[] = [];
-
-  for (const curve of curves) {
-    for (const x of findRoots(curve.f, lo, hi, curve.fPrime ?? null)) {
-      pois.push({ kind: 'root', x, y: 0, curveIds: [curve.id] });
-      if (pois.length >= cap) return pois;
-    }
-    for (const e of findExtrema(curve, lo, hi)) {
-      pois.push({ kind: e.kind, x: e.x, y: e.y, curveIds: [curve.id] });
-      if (pois.length >= cap) return pois;
-    }
-  }
-
-  for (let i = 0; i < curves.length; i++) {
-    for (let j = i + 1; j < curves.length; j++) {
-      const a = curves[i];
-      const b = curves[j];
-      const diff = (x: number): number => a.f(x) - b.f(x);
-      const diffPrime =
-        a.fPrime && b.fPrime
-          ? (x: number): number => a.fPrime!(x) - b.fPrime!(x)
-          : null;
-      for (const x of findRoots(diff, lo, hi, diffPrime)) {
-        const y = a.f(x);
-        if (!Number.isFinite(y)) continue;
-        pois.push({ kind: 'intersection', x, y, curveIds: [a.id, b.id] });
-        if (pois.length >= cap) return pois;
-      }
-    }
-  }
-
-  return pois;
 }

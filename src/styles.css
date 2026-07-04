@@ -47,8 +47,10 @@ body {
 /* ---------------- sidebar ---------------- */
 
 .sidebar {
-  width: 320px;
-  min-width: 240px;
+  /* Responsive: a comfortable ~320px on wide screens, never below 240px or
+     above 34% of a narrow window, and it doesn't shrink to give the canvas
+     room — the canvas (flex:1, min-width:0) absorbs the remaining space. */
+  flex: 0 0 clamp(240px, 34%, 340px);
   background: var(--bg-raised);
   border-right: 1px solid var(--border);
   display: flex;
@@ -409,4 +411,15 @@ body {
 .graph-controls button:hover,
 .graph-controls button[aria-pressed='true'] {
   color: var(--text);
+}
+
+/* "d/dx" / "Δ" need to fit the square control. */
+.graph-controls .slope-toggle {
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.graph-controls .slope-toggle[aria-pressed='true'] {
+  color: var(--accent);
+  border-color: var(--accent);
 }
