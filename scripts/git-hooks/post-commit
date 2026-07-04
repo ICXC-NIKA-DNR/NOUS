@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# gcalc auto-push post-commit hook.
+#
+# Pushes the just-committed branch to origin so local history is mirrored on
+# GitHub without a manual `git push`. It runs AFTER the commit is finalized,
+# so a failed push never affects the commit itself — your work is always safe
+# locally, this only removes the manual push step.
+#
+# This is NOT CI or release automation: it only pushes what you chose to
+# commit, when you commit it.
+#
+# To enable (git hooks are not shared by clone — each contributor opts in):
+#   cp scripts/git-hooks/post-commit .git/hooks/post-commit
+#   chmod +x .git/hooks/post-commit
+
+branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null)"
+if [ -z "$branch" ] || [ "$branch" = "HEAD" ]; then
+  echo "auto-push: detached HEAD or no current branch — skipping push." >&2
+  exit 0
+fi
+
+if ! git remote get-url origin >/dev/null 2>&1; then
+  echo "auto-push: no 'origin' remote configured — skipping push." >&2
+  echo "           add one with:  git remote add origin <url>" >&2
+  exit 0
+fi
+
+echo "auto-push: pushing '$branch' to origin…"
+if git push origin "$branch"; then
+  echo "auto-push: done."
+else
+  echo "auto-push: PUSH FAILED for '$branch' (network / auth / diverged?)." >&2
+  echo "           your commit is saved locally; push manually once resolved:" >&2
+  echo "             git push origin $branch" >&2
+fi
+
+# Always succeed: the commit is already done, and the hook's exit status must
+# never make it look otherwise.
+exit 0

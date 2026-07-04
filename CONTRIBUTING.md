@@ -20,6 +20,23 @@ Thanks for helping build gcalc.
 See the build instructions in `README.md`, then pick up the next unchecked
 milestone in `PLAN.md`. Architecture constraints live in `CLAUDE.md`.
 
+## Optional: auto-push on commit
+
+If you'd like every local commit to push to your fork automatically (so your
+history mirrors to GitHub without a manual `git push`), install the provided
+post-commit hook:
+
+```sh
+cp scripts/git-hooks/post-commit .git/hooks/post-commit
+chmod +x .git/hooks/post-commit
+```
+
+Git hooks aren't shared by `clone`, so this is per-contributor and opt-in. The
+hook runs *after* the commit is finalized — a failed push (no network, auth,
+diverged branch, no `origin`) prints a clear message and never affects the
+commit itself. It's purely a convenience over manual pushing: not CI, not
+release automation.
+
 ## Filing issues
 
 Include your OS, the expression(s) involved, and — once the app ships error
