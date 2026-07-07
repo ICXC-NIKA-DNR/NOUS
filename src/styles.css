@@ -79,6 +79,34 @@ body {
   gap: 8px;
 }
 
+.undo-group {
+  display: flex;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.undo-group button {
+  background: transparent;
+  color: var(--text-dim);
+  border: none;
+  font: inherit;
+  font-size: 14px;
+  line-height: 1;
+  padding: 3px 8px;
+  cursor: pointer;
+}
+
+.undo-group button:hover:not(:disabled) {
+  background: var(--bg-input);
+  color: var(--text);
+}
+
+.undo-group button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
 .precision-select select {
   background: var(--bg-input);
   color: var(--text-dim);
@@ -270,8 +298,14 @@ body {
   border-color: var(--accent);
 }
 
-.add-button {
+.list-actions {
+  display: flex;
+  gap: 8px;
   margin: 10px;
+}
+
+.add-button {
+  flex: 1;
   background: transparent;
   border: 1px dashed var(--border);
   border-radius: 6px;
@@ -285,6 +319,162 @@ body {
 .add-button:hover {
   color: var(--text);
   border-color: var(--text-dim);
+}
+
+/* ---------------- tree: drag handle, drop targets, folders ---------------- */
+
+.tree-item {
+  position: relative;
+}
+
+/* Drop indicators driven by App's dropHint. */
+.tree-item.drop-before::before,
+.tree-item.drop-after::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--accent);
+  z-index: 2;
+  pointer-events: none;
+}
+
+.tree-item.drop-before::before {
+  top: -1px;
+}
+
+.tree-item.drop-after::after {
+  bottom: -1px;
+}
+
+.tree-item.drop-into > .folder > .folder-header {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+  border-radius: 4px;
+}
+
+.drag-handle {
+  flex: none;
+  cursor: grab;
+  color: var(--text-dim);
+  opacity: 0.35;
+  font-size: 13px;
+  line-height: 1;
+  padding: 0 2px;
+  user-select: none;
+}
+
+.drag-handle:hover {
+  opacity: 0.8;
+}
+
+.drag-handle:active {
+  cursor: grabbing;
+}
+
+.expr-with-handle {
+  display: flex;
+  align-items: stretch;
+}
+
+.expr-with-handle .drag-handle {
+  display: flex;
+  align-items: center;
+  padding-left: 4px;
+}
+
+.expr-with-handle .expr-row {
+  flex: 1;
+  min-width: 0;
+}
+
+.folder {
+  border-bottom: 1px solid var(--border);
+}
+
+.folder-header {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 8px 6px 4px;
+  background: var(--bg-input);
+}
+
+.folder-chevron {
+  flex: none;
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  font-size: 11px;
+  cursor: pointer;
+  padding: 2px 3px;
+  line-height: 1;
+}
+
+.folder-eye {
+  flex: none;
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  padding: 2px;
+  display: flex;
+  align-items: center;
+}
+
+.folder-eye:hover {
+  color: var(--text);
+}
+
+.folder-eye-off {
+  opacity: 0.55;
+}
+
+.folder-name {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  color: var(--text);
+  border: 1px solid transparent;
+  border-radius: 5px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 3px 6px;
+  outline: none;
+}
+
+.folder-name:hover {
+  border-color: var(--border);
+}
+
+.folder-name:focus {
+  border-color: var(--accent);
+  background: var(--bg);
+}
+
+.folder-delete {
+  flex: none;
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 4px;
+}
+
+.folder-delete:hover {
+  color: var(--text);
+  background: var(--bg-raised);
+}
+
+/* Indent children so nesting reads clearly, with a guide line. */
+.folder-children {
+  margin-left: 12px;
+  border-left: 1px solid var(--border);
 }
 
 /* ---------------- sliders ---------------- */

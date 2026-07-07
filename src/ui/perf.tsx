@@ -6,7 +6,13 @@
 
 import { useCallback, useEffect, useRef } from 'react';
 import type { FrameStats } from './GraphCanvas.tsx';
-import type { ExpressionEntry, SliderMeta } from './ExpressionRow.tsx';
+import {
+  applyCommand,
+  flattenExpressions,
+  makeExpression,
+  type GcalcDocument,
+  type Item,
+} from '../state/document.ts';
 import { definitionName } from './analyze.ts';
 
 function perfCount(): number {
@@ -57,31 +63,27 @@ const GALLERY: string[] = [
   '(-y/4, x/4)',
 ];
 
-/** The ?gallery=1 document, or null in normal operation. */
-export function galleryEntries(
-  make: (source: string, slider?: SliderMeta) => ExpressionEntry,
-): ExpressionEntry[] | null {
+/** The ?gallery=1 document items, or null in normal operation. */
+export function galleryItems(): Item[] | null {
   if (typeof location === 'undefined') return null;
   if (new URLSearchParams(location.search).get('gallery') === null) return null;
-  return GALLERY.map((src) => make(src));
+  return GALLERY.map((src) => makeExpression(src));
 }
 
-/** The ?perf=N document, or null in normal operation. */
-export function perfEntries(
-  make: (source: string, slider?: SliderMeta) => ExpressionEntry,
-): ExpressionEntry[] | null {
+/** The ?perf=N document items, or null in normal operation. */
+export function perfItems(): Item[] | null {
   const n = perfCount();
   if (n === 0) return null;
-  const entries = SLIDERS.map(([name, value]) =>
-    make(`${name} = ${value}`, { min: -10, max: 10, step: 0.1 }),
+  const items: Item[] = SLIDERS.map(([name, value]) =>
+    makeExpression(`${name} = ${value}`, { min: -10, max: 10, step: 0.1 }),
   );
   for (let i = 0; i < n; i++) {
-    entries.push(make(TEMPLATES[i % TEMPLATES.length](i)));
+    items.push(makeExpression(TEMPLATES[i % TEMPLATES.length](i)));
   }
-  return entries;
+  return items;
 }
 
-type SetEntries = React.Dispatch<React.SetStateAction<ExpressionEntry[]>>;
+type SetDocument = React.Dispatch<React.SetStateAction<GcalcDocument>>;
 
 interface PerfAnimation {
   hudRef: React.RefObject<HTMLDivElement>;
@@ -90,7 +92,7 @@ interface PerfAnimation {
   toggle: () => boolean;
 }
 
-export function usePerfAnimation(setEntries: SetEntries): PerfAnimation {
+export function usePerfAnimation(setDoc: SetDocument): PerfAnimation {
   const active = perfCount() > 0;
   const hudRef = useRef<HTMLDivElement>(null);
   // Phase 1: measure the webview's idle rAF cadence (the fps ceiling this
@@ -133,15 +135,18 @@ export function usePerfAnimation(setEntries: SetEntries): PerfAnimation {
       if (running.current) {
         // Simulate a user drag: one slider sweeps at a time (that's what
         // "dragging stays smooth" gates), alternating a / b every 4s so both
-        // dependency sets get exercised.
+        // dependency sets get exercised. Writes straight to the document
+        // (never through undo history — this is an automated animation).
         const t = now / 1000;
         const which = Math.floor(t / 4) % 2 === 0 ? 'a' : 'b';
         const value = ((which === 'a' ? 5 : 3) * Math.sin(t * 2)).toFixed(2);
-        setEntries((es) =>
-          es.map((e) =>
-            definitionName(e.source) === which ? { ...e, source: `${which} = ${value}` } : e,
-          ),
-        );
+        setDoc((d) => {
+          const target = flattenExpressions(d).find(
+            ({ item }) => definitionName(item.source) === which,
+          );
+          if (!target) return d;
+          return applyCommand(d, { type: 'edit', id: target.item.id, source: `${which} = ${value}` });
+        });
       }
 
       if (fr.last > 0) {
@@ -184,7 +189,7 @@ export function usePerfAnimation(setEntries: SetEntries): PerfAnimation {
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [active, setEntries]);
+  }, [active, setDoc]);
 
   const toggle = useCallback((): boolean => {
     running.current = !running.current;
