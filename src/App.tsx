@@ -22,7 +22,8 @@ import {
   type GcalcDocument,
   type Item,
 } from './state/document.ts';
-import { useDocumentHistory } from './state/history.ts';
+import { makeTab, useWorkspace } from './state/workspace.ts';
+import type { Viewport } from './plot/viewport.ts';
 import { analyze, definitionName, formatValue, type Analysis } from './ui/analyze.ts';
 import {
   curveColorVar,
@@ -63,6 +64,9 @@ function derivativeOf(body: Expr): ((x: number, env: Env) => number) | undefined
 const INITIAL_DOC: GcalcDocument = emptyDocument(
   perfItems() ?? galleryItems() ?? [makeExpression()],
 );
+// Minted at module scope: StrictMode double-invokes state initializers, which
+// would burn tab ids ("Graph 2" as the first tab).
+const INITIAL_TAB = makeTab(INITIAL_DOC);
 
 const EMPTY_ANALYSIS: Analysis = { kind: 'empty' };
 
@@ -120,12 +124,49 @@ function solveTarget(a: Analysis | undefined): Relation | null {
 }
 
 export function App(): JSX.Element {
-  // All mutations flow through `dispatch`; undo/redo is snapshot history over
-  // that single choke point (state/history.ts). `setDocDirect` bypasses history
+  // The workspace holds document tabs, each an independent editing session
+  // (own document, own undo/redo, own viewport). All mutations flow through
+  // `dispatch` into the ACTIVE tab's history; `setDocDirect` bypasses history
   // for the automated perf animation only.
-  const { doc, dispatch, undo, redo, canUndo, canRedo, setDocDirect } =
-    useDocumentHistory(INITIAL_DOC);
+  const {
+    tabs,
+    activeTabId,
+    doc,
+    savedViewport,
+    dispatch,
+    undo,
+    redo,
+    canUndo,
+    canRedo,
+    newTab,
+    close: closeTab,
+    select: selectTab,
+    reportViewport,
+    setDocDirect,
+  } = useWorkspace(INITIAL_TAB);
   const { angleMode, precision } = doc;
+
+  // Live viewport per tab, in a ref: onViewportChange fires at pointer rate
+  // during pan/zoom, and a state write per frame would re-render the whole
+  // app. The ref feeds the seed on tab switch; the workspace's stored copy is
+  // refreshed at switch time (all a future serializer needs).
+  const liveViewports = useRef(new Map<number, Viewport>());
+  const activeTabIdRef = useRef(activeTabId);
+  activeTabIdRef.current = activeTabId;
+  const onViewportChange = useCallback((vp: Viewport): void => {
+    liveViewports.current.set(activeTabIdRef.current, vp);
+  }, []);
+
+  const onSelectTab = useCallback(
+    (id: number): void => {
+      // Flush the outgoing tab's live viewport into workspace state so its
+      // exact view is what the seed restores later.
+      const current = liveViewports.current.get(activeTabIdRef.current);
+      if (current) reportViewport(current);
+      selectTab(id);
+    },
+    [reportViewport, selectTab],
+  );
 
   // Ctrl/Cmd+Z undo, Ctrl/Cmd+Shift+Z or Ctrl+Y redo. Intercepted globally
   // (the expression inputs are React-controlled, so native field undo doesn't
@@ -542,6 +583,40 @@ export function App(): JSX.Element {
   return (
     <div className="app">
       <aside className="sidebar">
+        <div className="tab-bar" role="tablist" aria-label="Documents">
+          {tabs.map((t) => (
+            <div
+              key={t.id}
+              role="tab"
+              aria-selected={t.id === activeTabId}
+              tabIndex={0}
+              className={`tab${t.id === activeTabId ? ' tab-active' : ''}`}
+              onClick={() => onSelectTab(t.id)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') onSelectTab(t.id);
+              }}
+            >
+              <span className="tab-name">{t.name}</span>
+              {tabs.length > 1 && (
+                <button
+                  type="button"
+                  className="tab-close"
+                  title="Close tab"
+                  aria-label={`Close ${t.name}`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    closeTab(t.id);
+                  }}
+                >
+                  ×
+                </button>
+              )}
+            </div>
+          ))}
+          <button type="button" className="tab-new" title="New graph" onClick={newTab}>
+            +
+          </button>
+        </div>
         <header className="sidebar-header">
           <h1 className="app-title">gcalc</h1>
           <div className="header-controls">
@@ -607,12 +682,15 @@ export function App(): JSX.Element {
       </aside>
       <main className="canvas-area">
         <GraphCanvas
+          key={activeTabId} // remount per tab: each restores its own viewport
           curves={curves}
           env={env}
           dragPoints={dragPoints}
           precision={precision}
           onDragSlider={onDragSlider}
           onFrame={onFrame}
+          initialViewport={liveViewports.current.get(activeTabId) ?? savedViewport}
+          onViewportChange={onViewportChange}
         />
         <PerfHud hudRef={hudRef} toggle={toggle} />
       </main>

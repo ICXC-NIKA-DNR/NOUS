@@ -534,6 +534,12 @@ interface Props {
   onDragSlider: (name: string, value: number, step: number) => void;
   /** Called after each redraw with timing — the perf harness's hook. */
   onFrame?: (stats: FrameStats) => void;
+  /** Seed viewport (document tabs restore their own view on remount); the
+   * mount-time measure() re-fits it to the current container size. */
+  initialViewport?: Viewport | null;
+  /** Reports every viewport change. NOTE: fires per pan/zoom frame — store in
+   * a ref, not state, or the whole app re-renders at pointer rate. */
+  onViewportChange?: (viewport: Viewport) => void;
 }
 
 /** Size a canvas's backing store to the viewport; true if it changed. */
@@ -555,6 +561,8 @@ export function GraphCanvas({
   precision,
   onDragSlider,
   onFrame,
+  initialViewport,
+  onViewportChange,
 }: Props): JSX.Element {
   // Four stacked canvases. The grid only changes on pan/zoom. Curves split
   // by what changed in this commit: curves that resampled draw on the
@@ -568,7 +576,23 @@ export function GraphCanvas({
   const staticRef = useRef<HTMLCanvasElement | null>(null);
   const dynamicRef = useRef<HTMLCanvasElement | null>(null);
   const overlayRef = useRef<HTMLCanvasElement | null>(null);
-  const [viewport, setViewport] = useState<Viewport | null>(null);
+  const [viewport, setViewport] = useState<Viewport | null>(initialViewport ?? null);
+
+  // Report viewport changes upward (per-tab view persistence). The unmount
+  // flush covers a change made in the same commit as a tab switch, where the
+  // per-change effect would never get to run.
+  const reportRef = useRef({ viewport, onViewportChange });
+  reportRef.current = { viewport, onViewportChange };
+  useEffect(() => {
+    if (viewport && onViewportChange) onViewportChange(viewport);
+  }, [viewport, onViewportChange]);
+  useEffect(
+    () => () => {
+      const { viewport: vp, onViewportChange: report } = reportRef.current;
+      if (vp && report) report(vp);
+    },
+    [],
+  );
   const [showGrid, setShowGrid] = useState(true);
   const [features, setFeatures] = useState<Feature[] | null>(null);
   const [coincidences, setCoincidences] = useState<Coincidence[]>([]);
