@@ -324,10 +324,20 @@ export function parse(source: string, options: ParseOptions = {}): Expr {
     }
 
     if (tok.type === 'eof') {
+      // Most common cause: a trailing operator (`y = x +`). When that's what
+      // preceded the end, offer to remove it.
+      const before = pos > 0 ? tokens[pos - 1] : undefined;
       fail({
         kind: 'unexpected-end',
         message: 'The expression ends too early.',
         span: tok.span,
+        suggestion:
+          before !== undefined && (before.type === 'op' || before.type === 'comma')
+            ? {
+                label: `Remove trailing "${before.text}"`,
+                edit: { type: 'replace', span: before.span, text: '' },
+              }
+            : undefined,
       });
     }
 

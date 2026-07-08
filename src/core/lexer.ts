@@ -99,6 +99,7 @@ export function lex(source: string, options: LexOptions = {}): Token[] {
             kind: 'invalid-number',
             message: `Number "${source.slice(start, i)}" is missing digits after the decimal point.`,
             span: { start, end: i },
+            suggestion: { label: 'Insert "0"', edit: { type: 'insert', at: i, text: '0' } },
           });
         }
         while (i < source.length && isDigit(source[i])) i++;
@@ -264,6 +265,10 @@ export function lex(source: string, options: LexOptions = {}): Token[] {
           kind: 'unexpected-token',
           message: `Unexpected character "${c}".`,
           span: { start: i, end: i + 1 },
+          suggestion: {
+            label: `Remove "${c}"`,
+            edit: { type: 'replace', span: { start: i, end: i + 1 }, text: '' },
+          },
         });
     }
   }
