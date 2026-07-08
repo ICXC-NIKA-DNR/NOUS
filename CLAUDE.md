@@ -94,6 +94,12 @@ Ask the maintainer to choose. Do not silently bundle GPL code into an MIT repo.
   tab names). Mint in event handlers or at module scope.
 - Keep `README.md` build instructions honest — if a step doesn't work, fix the
   step or the doc in the same commit.
+- Artifacts of locked milestones keep their names (e.g.
+  `docs/dev/M6_checkpoint_prompt_1.md` stays) — apply correct naming to new
+  files only; don't rename history.
+- tsconfig sets `erasableSyntaxOnly`: constructor parameter properties
+  (`constructor(readonly x: string)`) don't compile — declare class fields
+  explicitly.
 
 ## Commands
 

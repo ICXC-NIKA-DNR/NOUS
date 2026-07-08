@@ -134,6 +134,11 @@ Known UI polish to verify here:
   show up in the Chromium preview, only the actual desktop app. Re-check
   after the color-scheme fix (added 2026-07-03) and either confirm resolved
   or add a custom-rendered dropdown (`appearance: none` + an SVG chevron).
+- PNG/SVG export filenames are hardcoded `graph.png`/`graph.svg`
+  (GraphCanvas doesn't know the tab name) — name exports after the tab.
+- Revisit crash-recovery UX (M8.3): "Recover" currently APPENDS the saved
+  tabs next to the fresh "Graph 1"; decide whether it should replace the
+  workspace instead.
 
 **Accept:** clean-clone build works by following README alone; CI green; v0.1.0
 tag.
