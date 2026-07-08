@@ -138,6 +138,71 @@ body {
   border-color: var(--text-dim);
 }
 
+.doc-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.doc-actions-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.doc-actions button {
+  background: transparent;
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1;
+  padding: 4px 8px;
+  cursor: pointer;
+}
+
+.doc-actions button:hover:not(:disabled) {
+  background: var(--bg-input);
+  color: var(--text);
+}
+
+.doc-actions button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.doc-actions-note {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.doc-actions-error {
+  color: var(--error);
+}
+
+.doc-actions-paste {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.share-input {
+  flex: 1;
+  min-width: 0;
+  resize: vertical;
+  background: var(--bg-input);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font: inherit;
+  font-size: 12px;
+  padding: 6px 8px;
+}
+
 .sidebar-header {
   display: flex;
   align-items: center;

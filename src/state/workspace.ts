@@ -119,6 +119,8 @@ export interface WorkspaceApi {
   undo: () => void;
   redo: () => void;
   newTab: () => void;
+  /** Open a loaded document (share code / file) as a new active tab. */
+  openDocument: (doc: GcalcDocument, name?: string, viewport?: Viewport | null) => void;
   close: (id: number) => void;
   select: (id: number) => void;
   reportViewport: (viewport: Viewport) => void;
@@ -145,6 +147,15 @@ export function useWorkspace(firstTab: Tab): WorkspaceApi {
     const tab = makeTab(emptyDocument([makeExpression()]));
     setWs((w) => addTab(w, tab));
   }, []);
+
+  const openDocument = useCallback(
+    (doc: GcalcDocument, name?: string, viewport?: Viewport | null): void => {
+      const tab = makeTab(doc, name);
+      if (viewport) tab.viewport = viewport;
+      setWs((w) => addTab(w, tab));
+    },
+    [],
+  );
 
   const reportViewport = useCallback((viewport: Viewport): void => {
     setWs((w) => setTabViewport(w, w.activeId, viewport));
@@ -175,10 +186,11 @@ export function useWorkspace(firstTab: Tab): WorkspaceApi {
       undo: undoCb,
       redo: redoCb,
       newTab,
+      openDocument,
       close,
       select,
       reportViewport,
       setDocDirect,
     };
-  }, [ws, dispatchCmd, undoCb, redoCb, newTab, close, select, reportViewport, setDocDirect]);
+  }, [ws, dispatchCmd, undoCb, redoCb, newTab, openDocument, close, select, reportViewport, setDocDirect]);
 }

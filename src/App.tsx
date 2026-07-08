@@ -22,7 +22,9 @@ import {
   type GcalcDocument,
   type Item,
 } from './state/document.ts';
+import { decodeShareCode, encodeShareCode } from './state/serialize.ts';
 import { makeTab, useWorkspace } from './state/workspace.ts';
+import { DocActions } from './ui/DocActions.tsx';
 import type { Viewport } from './plot/viewport.ts';
 import { analyze, definitionName, formatValue, type Analysis } from './ui/analyze.ts';
 import {
@@ -139,6 +141,7 @@ export function App(): JSX.Element {
     canUndo,
     canRedo,
     newTab,
+    openDocument,
     close: closeTab,
     select: selectTab,
     reportViewport,
@@ -507,6 +510,29 @@ export function App(): JSX.Element {
   const angleModeRef = useRef(angleMode);
   angleModeRef.current = angleMode;
 
+  /* ---- share codes (M8.1): one serializer, clipboard transport ---- */
+
+  const savedViewportRef = useRef(savedViewport);
+  savedViewportRef.current = savedViewport;
+
+  const makeShareCode = useCallback(
+    (): string =>
+      encodeShareCode(docRef.current, {
+        viewport:
+          liveViewports.current.get(activeTabIdRef.current) ?? savedViewportRef.current,
+      }),
+    [],
+  );
+
+  const openShareCode = useCallback(
+    (code: string): void => {
+      // Throws NousFormatError on bad input; DocActions renders the message.
+      const loaded = decodeShareCode(code);
+      openDocument(loaded.doc, loaded.name, loaded.viewport);
+    },
+    [openDocument],
+  );
+
   const { hudRef, onFrame, toggle } = usePerfAnimation(setDocDirect);
 
   const dragHandle = (id: number): JSX.Element => (
@@ -617,6 +643,7 @@ export function App(): JSX.Element {
             +
           </button>
         </div>
+        <DocActions makeShareCode={makeShareCode} openShareCode={openShareCode} />
         <header className="sidebar-header">
           <h1 className="app-title">NOUS</h1>
           <div className="header-controls">

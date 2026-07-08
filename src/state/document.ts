@@ -47,15 +47,22 @@ export interface GcalcDocument {
 let nextId = 1;
 let nextColor = 0;
 
+/** Mint a fresh session-local item id. Ids are never serialized (M8): opened
+ * documents remint every id through here, so they can't collide with items
+ * already alive in other tabs. */
+export function mintId(): number {
+  return nextId++;
+}
+
 /** Mint an expression item. Call only from event handlers or module scope —
  * never inside a React state initializer/updater, which re-runs under
  * StrictMode and would skip ids/colours. */
 export function makeExpression(source = '', slider?: SliderMeta): ExpressionItem {
-  return { kind: 'expression', id: nextId++, source, colorIndex: nextColor++, visible: true, slider };
+  return { kind: 'expression', id: mintId(), source, colorIndex: nextColor++, visible: true, slider };
 }
 
 export function makeFolder(name = 'Folder', children: Item[] = []): FolderItem {
-  return { kind: 'folder', id: nextId++, name, collapsed: false, visible: true, children };
+  return { kind: 'folder', id: mintId(), name, collapsed: false, visible: true, children };
 }
 
 export function emptyDocument(items: Item[]): GcalcDocument {

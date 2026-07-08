@@ -1,4 +1,4 @@
-# gcalc — syntax & feature reference
+# nous — syntax & feature reference
 
 Everything the app currently understands, plus how to run it. Status:
 M0–M7 complete (scaffold, plotting, sliders, full plot-type coverage, CAS,
