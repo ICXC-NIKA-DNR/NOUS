@@ -121,6 +121,19 @@ reset) + a shortcuts reference reachable from the UI.
 **Accept:** typing `si` offers `sin(`; unmatched-paren error shows a one-click
 fix that edits the expression in place; every listed shortcut works.
 
+Status: M9.1–M9.3 all landed (see docs/dev/M9_checkpoint_prompt.md).
+- M9.1 autocomplete — engine in `src/core/autocomplete.ts`, dropdown in
+  ExpressionRow. Note: the language has no multi-letter user identifiers
+  (unknown words lex as implicit products), so "user-defined f(x)" completion
+  from the checkpoint prompt is inapplicable; defined single-letter names are
+  in the vocabulary but are always fully typed already.
+- M9.2 clickable fixes — new suggestions for invalid-number, stray
+  characters, trailing operators; kinds with no mechanical fix (empty-input,
+  wrong-arity, not-a-condition, not-a-value, cas-unsupported) documented in
+  `src/core/__tests__/suggestions.test.ts`.
+- M9.3 shortcuts — one BINDINGS table (`src/ui/shortcuts.ts`) drives both the
+  global handler and the reference panel (⌨ button or `?`).
+
 ## M10 — Release hygiene
 App icon + window/taskbar branding. Verify pastel palette under CVD simulation
 and adjust. CONTRIBUTING.md finalized, README build steps re-verified from a
