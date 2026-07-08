@@ -134,6 +134,34 @@ Status: M9.1–M9.3 all landed (see docs/dev/M9_checkpoint_prompt.md).
 - M9.3 shortcuts — one BINDINGS table (`src/ui/shortcuts.ts`) drives both the
   global handler and the reference panel (⌨ button or `?`).
 
+## M9.5 — User-defined functions
+Multi-letter function definitions: `f(x) = x^2` then `f(9)` evaluates to 81;
+`myfn(x, y) = …` works for any name not reserved. Parens required at call
+sites — paren-less application (`sin 2x`) stays reserved for built-ins, so
+implicit multiplication (`xy`, `abx`) never silently captures user names.
+Multi-letter names are for FUNCTIONS ONLY in this pass; slider/value names
+stay single-letter. Shadowing a reserved name and recursive definitions both
+produce structured errors with suggestions where possible.
+
+Design (settled — see docs/dev/M9_5_checkpoint_prompt.md):
+- Two-pass naming: a cheap definition-head pre-scan (`word(params) =` at row
+  start) harvests candidate names, fed into the real lex/parse as
+  `extraNames`. No second expression parser; the AST stays the one source
+  of truth.
+- Plot hot path: user calls are INLINED at analysis time (substitute args
+  into the body AST, expandCas-style) so compile.ts never sees them; cycle
+  detection rejects recursion before inlining can hang.
+- The evaluator's existing `EvalContext.functions` machinery is the
+  reference semantics; the compiled/inlined path must agree with it.
+- Satisfies M9.1's deferred acceptance criterion: a defined `f(x) = …` now
+  appears in autocomplete (with paren insert) via the defined-names flow.
+
+**Accept:** `f(x) = x^2` row defines; `f(9)` in another row shows 81;
+`y = f(x) + f(2x)` plots correctly and stays smooth under a slider drag
+(inlining, not per-sample interpretation); `sin(x) = 1` and `f(x) = f(x-1)`
+produce structured errors; typing `f` in another row autocompletes `f(`;
+`.nous` save/share round-trips documents containing function definitions.
+
 ## M10 — Release hygiene
 App icon + window/taskbar branding. Verify pastel palette under CVD simulation
 and adjust. CONTRIBUTING.md finalized, README build steps re-verified from a
