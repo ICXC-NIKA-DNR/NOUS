@@ -22,7 +22,8 @@ import {
   type GcalcDocument,
   type Item,
 } from './state/document.ts';
-import { decodeShareCode, encodeShareCode } from './state/serialize.ts';
+import { filePlatform } from './platform/files.ts';
+import { decodeShareCode, documentToJson, encodeShareCode, parseNousJson } from './state/serialize.ts';
 import { makeTab, useWorkspace } from './state/workspace.ts';
 import { DocActions } from './ui/DocActions.tsx';
 import type { Viewport } from './plot/viewport.ts';
@@ -510,19 +511,44 @@ export function App(): JSX.Element {
   const angleModeRef = useRef(angleMode);
   angleModeRef.current = angleMode;
 
-  /* ---- share codes (M8.1): one serializer, clipboard transport ---- */
+  /* ---- persistence (M8.1/M8.2): one serializer, several transports ---- */
 
   const savedViewportRef = useRef(savedViewport);
   savedViewportRef.current = savedViewport;
+  const tabsRef = useRef(tabs);
+  tabsRef.current = tabs;
 
-  const makeShareCode = useCallback(
-    (): string =>
-      encodeShareCode(docRef.current, {
-        viewport:
-          liveViewports.current.get(activeTabIdRef.current) ?? savedViewportRef.current,
-      }),
+  const activeViewport = useCallback(
+    (): Viewport | null =>
+      liveViewports.current.get(activeTabIdRef.current) ?? savedViewportRef.current,
     [],
   );
+
+  const activeTabName = useCallback(
+    (): string =>
+      tabsRef.current.find((t) => t.id === activeTabIdRef.current)?.name ?? 'Graph',
+    [],
+  );
+
+  const makeShareCode = useCallback(
+    (): string => encodeShareCode(docRef.current, { viewport: activeViewport() }),
+    [activeViewport],
+  );
+
+  const saveFile = useCallback((): Promise<string | null> => {
+    const name = activeTabName();
+    const json = documentToJson(docRef.current, { name, viewport: activeViewport() });
+    return filePlatform.saveNousFile(json, `${name}.nous`);
+  }, [activeTabName, activeViewport]);
+
+  const openFile = useCallback(async (): Promise<string | null> => {
+    const file = await filePlatform.openNousFile();
+    if (file === null) return null;
+    const loaded = parseNousJson(file.contents);
+    // Prefer the name stored in the file; fall back to the file name.
+    openDocument(loaded.doc, loaded.name ?? file.name.replace(/\.nous$/i, ''), loaded.viewport);
+    return file.name;
+  }, [openDocument]);
 
   const openShareCode = useCallback(
     (code: string): void => {
@@ -643,7 +669,12 @@ export function App(): JSX.Element {
             +
           </button>
         </div>
-        <DocActions makeShareCode={makeShareCode} openShareCode={openShareCode} />
+        <DocActions
+          makeShareCode={makeShareCode}
+          openShareCode={openShareCode}
+          saveFile={saveFile}
+          openFile={openFile}
+        />
         <header className="sidebar-header">
           <h1 className="app-title">NOUS</h1>
           <div className="header-controls">

@@ -14,9 +14,15 @@ interface Props {
   makeShareCode: () => string;
   /** Decode + open a pasted share code as a new tab. Throws NousFormatError. */
   openShareCode: (code: string) => void;
+  /** Save the active document via the platform layer. Resolves to the saved
+   * file name, or null when cancelled. */
+  saveFile: () => Promise<string | null>;
+  /** Open a .nous file as a new tab. Null when cancelled; throws
+   * NousFormatError on malformed content. */
+  openFile: () => Promise<string | null>;
 }
 
-export function DocActions({ makeShareCode, openShareCode }: Props): JSX.Element {
+export function DocActions({ makeShareCode, openShareCode, saveFile, openFile }: Props): JSX.Element {
   const [note, setNote] = useState<{ text: string; error: boolean } | null>(null);
   const [pasteOpen, setPasteOpen] = useState(false);
   const [pasteText, setPasteText] = useState('');
@@ -61,9 +67,36 @@ export function DocActions({ makeShareCode, openShareCode }: Props): JSX.Element
     }
   }, [openShareCode, pasteText, flash]);
 
+  const onSave = useCallback((): void => {
+    saveFile().then(
+      (name) => {
+        if (name !== null) flash(`Saved ${name}`);
+      },
+      (err) => flash(err instanceof Error ? err.message : String(err), true),
+    );
+  }, [saveFile, flash]);
+
+  const onOpen = useCallback((): void => {
+    openFile().then(
+      (name) => {
+        if (name !== null) flash(`Opened ${name}`);
+      },
+      (err) => {
+        if (err instanceof NousFormatError) return flash(err.message, true);
+        flash(err instanceof Error ? err.message : String(err), true);
+      },
+    );
+  }, [openFile, flash]);
+
   return (
     <div className="doc-actions">
-      <div className="doc-actions-row" role="group" aria-label="Share">
+      <div className="doc-actions-row" role="group" aria-label="File and share">
+        <button type="button" title="Save this graph as a .nous file" onClick={onSave}>
+          Save
+        </button>
+        <button type="button" title="Open a .nous file" onClick={onOpen}>
+          Open
+        </button>
         <button type="button" title="Copy a share code for this graph" onClick={onCopy}>
           Copy share code
         </button>
