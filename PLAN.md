@@ -81,7 +81,7 @@ drags (coalesced), folder ops, deletions.
 nested folder DnD works; two tabs hold independent state.
 
 ## M8 — Persistence, share, export
-Versioned `.gcalc` JSON save/open via native OS dialogs (per-document, includes
+Versioned `.nous` JSON save/open via native OS dialogs (per-document, includes
 folders + sliders + view window). "Copy Share Code": same serializer →
 compact JSON → base64 to clipboard; pasting a valid code reconstructs the graph.
 Local autosave with crash-recovery offer on next launch. Local-only error log

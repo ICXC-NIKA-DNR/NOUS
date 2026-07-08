@@ -618,7 +618,7 @@ export function App(): JSX.Element {
           </button>
         </div>
         <header className="sidebar-header">
-          <h1 className="app-title">gcalc</h1>
+          <h1 className="app-title">NOUS</h1>
           <div className="header-controls">
             <div className="undo-group" role="group" aria-label="History">
               <button

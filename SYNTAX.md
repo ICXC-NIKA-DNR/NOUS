@@ -7,7 +7,7 @@ graph intelligence, folders/tabs/undo).
 ## Launch it locally
 
 ```sh
-cd gcalc
+cd nous
 export PATH="$HOME/.local/node-v22.18.0-linux-x64/bin:$HOME/.cargo/bin:$PATH"  # if not in your shell rc yet
 npm install          # first time only
 npm test             # type-check + full test suite (205 tests, no Rust needed)

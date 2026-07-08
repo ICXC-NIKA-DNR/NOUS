@@ -1,5 +1,5 @@
 [package]
-name = "gcalc"
+name = "nous"
 version = "0.0.1"
 description = "Free, open-source desktop graphing calculator"
 edition = "2021"

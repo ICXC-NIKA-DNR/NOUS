@@ -24,7 +24,7 @@ npm run tauri build    # release build (bundling is disabled until M10 adds icon
 
 If Tauri CLI versions have drifted from this scaffold, regenerate the config
 with `npx tauri init`/`create-tauri-app` rather than hand-patching, then
-re-apply the identifier (`org.gcalc.app`) and window settings.
+re-apply the identifier (`com.nousproject.app`) and window settings.
 
 ### Linux: choppy rendering / low fps
 

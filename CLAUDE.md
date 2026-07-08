@@ -57,8 +57,8 @@ start a milestone until the previous one's acceptance criteria pass.
   suggestion. Extend this pattern; never surface a bare generic error string.
 - **Undo/redo:** all document mutations go through a single command/action layer
   from the moment folders exist (M7); don't retrofit it later.
-- **Persistence format:** `.gcalc` files are versioned JSON
-  (`{ "format": "gcalc", "version": 1, ... }`). The share-code feature is the same
+- **Persistence format:** `.nous` files are versioned JSON
+  (`{ "format": "nous", "version": 1, ... }`). The share-code feature is the same
   JSON, compact-serialized + base64. One serializer, two transports.
 
 ## ⚠ Open licensing decision — RESOLVED, see CAS_SPEC.md

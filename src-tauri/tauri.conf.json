@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "gcalc",
+  "productName": "NOUS",
   "version": "0.0.1",
-  "identifier": "org.gcalc.app",
+  "identifier": "com.nousproject.app",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "gcalc",
+        "title": "NOUS",
         "width": 1280,
         "height": 800,
         "minWidth": 800,
