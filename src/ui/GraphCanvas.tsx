@@ -542,6 +542,8 @@ interface Props {
   /** Seed viewport (document tabs restore their own view on remount); the
    * mount-time measure() re-fits it to the current container size. */
   initialViewport?: Viewport | null;
+  /** Populated with imperative view controls (keyboard shortcuts, M9.3). */
+  apiRef?: React.MutableRefObject<GraphApi | null>;
   /** Reports every viewport change. NOTE: fires per pan/zoom frame — store in
    * a ref, not state, or the whole app re-renders at pointer rate. */
   onViewportChange?: (viewport: Viewport) => void;
@@ -559,6 +561,14 @@ function fitCanvas(canvas: HTMLCanvasElement, vp: Viewport, dpr: number): void {
   }
 }
 
+/** Imperative view controls exposed to the app-level keyboard handler —
+ * same zoom/reset code paths the wheel and buttons use. */
+export interface GraphApi {
+  zoomIn: () => void;
+  zoomOut: () => void;
+  resetView: () => void;
+}
+
 export function GraphCanvas({
   curves,
   env,
@@ -568,6 +578,7 @@ export function GraphCanvas({
   onFrame,
   initialViewport,
   onViewportChange,
+  apiRef,
 }: Props): JSX.Element {
   // Four stacked canvases. The grid only changes on pan/zoom. Curves split
   // by what changed in this commit: curves that resampled draw on the
@@ -1010,6 +1021,23 @@ export function GraphCanvas({
   const resetView = useCallback(() => {
     setViewport((vp) => (vp ? defaultViewport(vp.width, vp.height) : vp));
   }, []);
+
+  // Keyboard zoom (M9.3): centered, same zoomAt the wheel uses.
+  const zoomCentered = useCallback((factor: number): void => {
+    setViewport((vp) => (vp ? zoomAt(vp, vp.width / 2, vp.height / 2, factor) : vp));
+  }, []);
+
+  useEffect(() => {
+    if (!apiRef) return;
+    apiRef.current = {
+      zoomIn: () => zoomCentered(1 / 1.25),
+      zoomOut: () => zoomCentered(1.25),
+      resetView,
+    };
+    return () => {
+      apiRef.current = null;
+    };
+  }, [apiRef, zoomCentered, resetView]);
 
   /* ---- export (M8.4) ---- */
 

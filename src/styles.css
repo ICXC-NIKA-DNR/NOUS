@@ -203,6 +203,104 @@ body {
   padding: 6px 8px;
 }
 
+.shortcuts-button {
+  background: transparent;
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1;
+  padding: 3px 7px;
+  cursor: pointer;
+}
+
+.shortcuts-button:hover {
+  color: var(--text);
+  border-color: var(--text-dim);
+}
+
+.shortcuts-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.shortcuts-panel {
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+  padding: 16px 20px;
+  min-width: 320px;
+  max-width: 90vw;
+}
+
+.shortcuts-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.shortcuts-head h2 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.shortcuts-head button {
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 16px;
+  cursor: pointer;
+}
+
+.shortcuts-list {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.shortcuts-row {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.shortcuts-row dt {
+  min-width: 150px;
+}
+
+.shortcuts-row dd {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.shortcuts-panel kbd {
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--text);
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 6px;
+}
+
+.shortcuts-note {
+  margin: 12px 0 0;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
 .recovery-banner {
   display: flex;
   flex-direction: column;

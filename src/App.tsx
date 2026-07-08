@@ -39,7 +39,9 @@ import {
   type SliderMeta,
 } from './ui/ExpressionRow.tsx';
 import { FolderRow } from './ui/FolderRow.tsx';
-import { GraphCanvas, type DragPoint, type PlottedCurve } from './ui/GraphCanvas.tsx';
+import { GraphCanvas, type DragPoint, type GraphApi, type PlottedCurve } from './ui/GraphCanvas.tsx';
+import { matchShortcut } from './ui/shortcuts.ts';
+import { ShortcutsPanel } from './ui/ShortcutsPanel.tsx';
 import { galleryItems, PerfHud, perfItems, usePerfAnimation } from './ui/perf.tsx';
 import { toSource } from './ui/toSource.ts';
 
@@ -176,24 +178,65 @@ export function App(): JSX.Element {
     [reportViewport, selectTab],
   );
 
-  // Ctrl/Cmd+Z undo, Ctrl/Cmd+Shift+Z or Ctrl+Y redo. Intercepted globally
-  // (the expression inputs are React-controlled, so native field undo doesn't
-  // apply — document undo is what the user means everywhere in the app).
+  // Global keyboard shortcuts (M7 undo/redo + M9.3), all through the one
+  // BINDINGS table in ui/shortcuts.ts. Intercepted globally: the expression
+  // inputs are React-controlled, so native field undo doesn't apply —
+  // document-level actions are what the user means everywhere in the app.
+  const graphApi = useRef<GraphApi | null>(null);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
-      if (!(e.ctrlKey || e.metaKey)) return;
-      const key = e.key.toLowerCase();
-      if (key === 'z' && !e.shiftKey) {
-        e.preventDefault();
-        undo();
-      } else if ((key === 'z' && e.shiftKey) || key === 'y') {
-        e.preventDefault();
-        redo();
+      if (e.key === 'Escape') {
+        setShortcutsOpen(false);
+        return; // never consumed further: rows use Esc for their own dismissals
+      }
+      const target = e.target as HTMLElement | null;
+      const typing =
+        target instanceof HTMLInputElement ||
+        target instanceof HTMLTextAreaElement ||
+        target instanceof HTMLSelectElement;
+      const action = matchShortcut({
+        key: e.key,
+        ctrlKey: e.ctrlKey,
+        metaKey: e.metaKey,
+        shiftKey: e.shiftKey,
+        altKey: e.altKey,
+        typing,
+      });
+      if (action === null) return;
+      // Row-targeted actions apply to the row whose input has focus.
+      const rowId = ((): number | null => {
+        const el = target?.closest?.('[data-item-id]');
+        const raw = el?.getAttribute('data-item-id');
+        return raw ? Number(raw) : null;
+      })();
+      e.preventDefault();
+      switch (action) {
+        case 'undo':
+          return undo();
+        case 'redo':
+          return redo();
+        case 'new-expression':
+          return dispatch({ type: 'add', item: makeExpression() });
+        case 'delete-expression':
+          if (rowId !== null) dispatch({ type: 'delete', id: rowId, fallback: makeExpression() });
+          return;
+        case 'toggle-visibility':
+          if (rowId !== null) dispatch({ type: 'toggleVisible', id: rowId });
+          return;
+        case 'zoom-in':
+          return graphApi.current?.zoomIn();
+        case 'zoom-out':
+          return graphApi.current?.zoomOut();
+        case 'zoom-reset':
+          return graphApi.current?.resetView();
+        case 'show-shortcuts':
+          return setShortcutsOpen(true);
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [undo, redo]);
+  }, [undo, redo, dispatch]);
 
   // Expressions in display order, each with its effective (folder-cascaded)
   // visibility. Definitions stay in scope regardless of visibility; only
@@ -657,7 +700,7 @@ export function App(): JSX.Element {
     };
     if (item.kind === 'folder') {
       return (
-        <div key={item.id} className={`tree-item${hint}`} {...dnd}>
+        <div key={item.id} className={`tree-item${hint}`} data-item-id={item.id} {...dnd}>
           <FolderRow
             folder={item}
             dragHandle={dragHandle(item.id)}
@@ -681,7 +724,7 @@ export function App(): JSX.Element {
             ? TABLE_ACTIONS
             : NO_ACTIONS;
     return (
-      <div key={item.id} className={`tree-item${hint}`} {...dnd}>
+      <div key={item.id} className={`tree-item${hint}`} data-item-id={item.id} {...dnd}>
         <div className="expr-with-handle">
           {dragHandle(item.id)}
           <ExpressionRow
@@ -798,6 +841,15 @@ export function App(): JSX.Element {
                 ))}
               </select>
             </label>
+            <button
+              type="button"
+              className="shortcuts-button"
+              title="Keyboard shortcuts (?)"
+              aria-label="Keyboard shortcuts"
+              onClick={() => setShortcutsOpen(true)}
+            >
+              ⌨
+            </button>
             <div className="angle-toggle" role="group" aria-label="Angle mode">
               <button
                 type="button"
@@ -842,9 +894,11 @@ export function App(): JSX.Element {
           onFrame={onFrame}
           initialViewport={liveViewports.current.get(activeTabId) ?? savedViewport}
           onViewportChange={onViewportChange}
+          apiRef={graphApi}
         />
         <PerfHud hudRef={hudRef} toggle={toggle} />
       </main>
+      {shortcutsOpen && <ShortcutsPanel onClose={() => setShortcutsOpen(false)} />}
     </div>
   );
 }
