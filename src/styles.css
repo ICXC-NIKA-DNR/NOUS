@@ -357,6 +357,52 @@ body {
   padding: 0;
 }
 
+.ac-anchor {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  display: flex;
+}
+
+.ac-menu {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(100% + 2px);
+  z-index: 20;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.ac-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  background: transparent;
+  border: none;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  padding: 5px 10px;
+  cursor: pointer;
+}
+
+.ac-item-active {
+  background: var(--bg-input);
+}
+
+.ac-kind {
+  font-size: 10px;
+  color: var(--text-dim);
+}
+
 .expr-input {
   flex: 1;
   min-width: 0;

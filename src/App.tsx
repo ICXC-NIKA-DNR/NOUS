@@ -696,6 +696,7 @@ export function App(): JSX.Element {
             onToggle={onToggle}
             onDelete={onDelete}
             onEnter={addEntry}
+            definedNames={defined}
           />
         </div>
       </div>

@@ -5,7 +5,12 @@
 // single CasEngine.
 
 import katex from 'katex';
-import { memo, useMemo, useState } from 'react';
+import { memo, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import {
+  applyCompletion,
+  complete,
+  type CompletionResult,
+} from '../core/autocomplete.ts';
 import type { Analysis } from './analyze.ts';
 import { applyEdit, formatValue } from './analyze.ts';
 import { toTex } from './tex.ts';
@@ -75,6 +80,8 @@ interface RowProps {
   onToggle: (id: number) => void;
   onDelete: (id: number) => void;
   onEnter: () => void;
+  /** Names defined in the document (sliders/values) — autocomplete scope. */
+  definedNames: ReadonlySet<string>;
 }
 
 function MathPreview({ analysis, precision }: { analysis: Analysis; precision: number }): JSX.Element | null {
@@ -155,9 +162,38 @@ export const ExpressionRow = memo(function ExpressionRow({
   onToggle,
   onDelete,
   onEnter,
+  definedNames,
 }: RowProps): JSX.Element {
   const id = entry.id;
   const [menuOpen, setMenuOpen] = useState(false);
+
+  /* ---- autocomplete (M9.1) ---- */
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const [ac, setAc] = useState<CompletionResult | null>(null);
+  const [acIndex, setAcIndex] = useState(0);
+  // Caret to restore after an accepted completion re-renders the input.
+  const pendingCaret = useRef<number | null>(null);
+  useLayoutEffect(() => {
+    if (pendingCaret.current === null) return;
+    inputRef.current?.setSelectionRange(pendingCaret.current, pendingCaret.current);
+    pendingCaret.current = null;
+  }, [entry.source]);
+
+  const refreshCompletions = (source: string, caret: number | null): void => {
+    setAc(caret === null ? null : complete(source, caret, definedNames));
+    setAcIndex(0);
+  };
+
+  const accept = (index: number): void => {
+    if (ac === null) return;
+    const item = ac.items[index];
+    if (!item) return;
+    const applied = applyCompletion(entry.source, ac, item);
+    pendingCaret.current = applied.caret;
+    setAc(null);
+    changeSource(applied.source);
+    inputRef.current?.focus();
+  };
   const plottable = analysis.kind === 'plot';
   const color = curveColorVar(entry.colorIndex);
   const diagnostic = analysis.kind === 'error' ? analysis.diagnostic : null;
@@ -177,17 +213,66 @@ export const ExpressionRow = memo(function ExpressionRow({
           aria-pressed={entry.visible}
           onClick={() => onToggle(id)}
         />
-        <input
-          className="expr-input"
-          value={entry.source}
-          placeholder="y = f(x)"
-          spellCheck={false}
-          autoComplete="off"
-          onChange={(e) => changeSource(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') onEnter();
-          }}
-        />
+        <div className="ac-anchor">
+          <input
+            ref={inputRef}
+            className="expr-input"
+            value={entry.source}
+            placeholder="y = f(x)"
+            spellCheck={false}
+            autoComplete="off"
+            onChange={(e) => {
+              changeSource(e.target.value);
+              refreshCompletions(e.target.value, e.target.selectionStart);
+            }}
+            onKeyDown={(e) => {
+              if (ac !== null) {
+                if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+                  e.preventDefault();
+                  const d = e.key === 'ArrowDown' ? 1 : -1;
+                  setAcIndex((i) => (i + d + ac.items.length) % ac.items.length);
+                  return;
+                }
+                if (e.key === 'Enter' || e.key === 'Tab') {
+                  e.preventDefault();
+                  accept(acIndex);
+                  return;
+                }
+                if (e.key === 'Escape') {
+                  e.preventDefault();
+                  setAc(null);
+                  return;
+                }
+              }
+              if (e.key === 'Enter') onEnter();
+            }}
+            onBlur={() => setAc(null)}
+            onClick={(e) => refreshCompletions(entry.source, e.currentTarget.selectionStart)}
+          />
+          {ac !== null && (
+            <div className="ac-menu" role="listbox" aria-label="Completions">
+              {ac.items.map((item, i) => (
+                <button
+                  key={item.name}
+                  type="button"
+                  role="option"
+                  aria-selected={i === acIndex}
+                  className={`ac-item${i === acIndex ? ' ac-item-active' : ''}`}
+                  // mousedown so the input's blur (which closes the menu)
+                  // doesn't fire before the click lands
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    accept(i);
+                  }}
+                  onMouseEnter={() => setAcIndex(i)}
+                >
+                  <span className="ac-label">{item.label}</span>
+                  <span className="ac-kind">{item.kind}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
         {casActions.length > 0 && (
           <div className="cas-anchor">
             <button
