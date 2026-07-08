@@ -203,6 +203,53 @@ body {
   padding: 6px 8px;
 }
 
+.recovery-banner {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  font-size: 13px;
+  background: var(--bg-raised);
+  border-bottom: 1px solid var(--accent);
+}
+
+.recovery-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.recovery-actions button {
+  background: transparent;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font: inherit;
+  font-size: 12px;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+
+.recovery-actions button:first-child {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.recovery-actions button:hover {
+  background: var(--bg-input);
+}
+
+.error-log-path {
+  padding: 6px 12px;
+  font-size: 11px;
+  color: var(--text-dim);
+  border-top: 1px solid var(--border);
+  overflow-wrap: anywhere;
+}
+
+.error-log-path code {
+  font-size: 10px;
+}
+
 .sidebar-header {
   display: flex;
   align-items: center;

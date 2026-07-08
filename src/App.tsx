@@ -22,7 +22,10 @@ import {
   type GcalcDocument,
   type Item,
 } from './state/document.ts';
+import { autosaveStore, installCleanExitMarker } from './platform/autosave.ts';
+import { errorLogPath, installErrorLog } from './platform/errorlog.ts';
 import { filePlatform } from './platform/files.ts';
+import { packSession, unpackSession, type UnpackedSession } from './state/autosave.ts';
 import { decodeShareCode, documentToJson, encodeShareCode, parseNousJson } from './state/serialize.ts';
 import { makeTab, useWorkspace } from './state/workspace.ts';
 import { DocActions } from './ui/DocActions.tsx';
@@ -143,6 +146,7 @@ export function App(): JSX.Element {
     canRedo,
     newTab,
     openDocument,
+    getSessionTabs,
     close: closeTab,
     select: selectTab,
     reportViewport,
@@ -559,6 +563,72 @@ export function App(): JSX.Element {
     [openDocument],
   );
 
+  /* ---- autosave + crash recovery (M8.3) ---- */
+
+  // Recovery payload found on launch (unclean previous exit). Read once on
+  // mount, not in the initializer: reads are cheap but the offer should also
+  // survive a StrictMode double-mount unambiguously.
+  const [recovery, setRecovery] = useState<UnpackedSession | null>(null);
+  useEffect(() => {
+    const payload = autosaveStore.readRecovery();
+    if (payload === null) return;
+    try {
+      setRecovery(unpackSession(payload));
+    } catch {
+      // Half-written payload from a crash mid-write: nothing recoverable.
+      autosaveStore.clear();
+    }
+  }, []);
+
+  const onRecover = useCallback((): void => {
+    setRecovery((r) => {
+      if (r) for (const t of r.tabs) openDocument(t.doc, t.name, t.viewport);
+      autosaveStore.clear();
+      return null;
+    });
+  }, [openDocument]);
+
+  const onDiscardRecovery = useCallback((): void => {
+    autosaveStore.clear();
+    setRecovery(null);
+  }, []);
+
+  // Debounced autosave on any document/tab change. The first run after mount
+  // is skipped: an untouched fresh session must not mark itself dirty, or
+  // every clean launch-then-kill would offer to "recover" an empty graph.
+  const autosaveArmed = useRef(false);
+  useEffect(() => {
+    if (!autosaveArmed.current) {
+      autosaveArmed.current = true;
+      return;
+    }
+    const timer = setTimeout(() => {
+      const tabsNow = getSessionTabs().map((t) => ({
+        name: t.name,
+        doc: t.doc,
+        viewport: liveViewports.current.get(t.id) ?? t.viewport,
+      }));
+      autosaveStore.write(packSession(tabsNow));
+    }, 800);
+    return () => clearTimeout(timer);
+  }, [doc, tabs, getSessionTabs]);
+
+  // Clean-exit marker + error log capture; the log path renders in the footer.
+  const [logPath, setLogPath] = useState('');
+  useEffect(() => {
+    const uninstallMarker = installCleanExitMarker();
+    const uninstallLog = installErrorLog();
+    let alive = true;
+    errorLogPath().then((p) => {
+      if (alive) setLogPath(p);
+    });
+    return () => {
+      alive = false;
+      uninstallMarker();
+      uninstallLog();
+    };
+  }, []);
+
   const { hudRef, onFrame, toggle } = usePerfAnimation(setDocDirect);
 
   const dragHandle = (id: number): JSX.Element => (
@@ -635,6 +705,23 @@ export function App(): JSX.Element {
   return (
     <div className="app">
       <aside className="sidebar">
+        {recovery && (
+          <div className="recovery-banner" role="alertdialog" aria-label="Recover unsaved work">
+            <span>
+              NOUS didn&apos;t close cleanly. Recover unsaved work from{' '}
+              {new Date(recovery.savedAt).toLocaleString()} ({recovery.tabs.length}{' '}
+              {recovery.tabs.length === 1 ? 'graph' : 'graphs'})?
+            </span>
+            <div className="recovery-actions">
+              <button type="button" onClick={onRecover}>
+                Recover
+              </button>
+              <button type="button" onClick={onDiscardRecovery}>
+                Discard
+              </button>
+            </div>
+          </div>
+        )}
         <div className="tab-bar" role="tablist" aria-label="Documents">
           {tabs.map((t) => (
             <div
@@ -737,6 +824,11 @@ export function App(): JSX.Element {
             + folder
           </button>
         </div>
+        {logPath && (
+          <div className="error-log-path" title="Attach this log to GitHub issues — it never leaves your machine">
+            Error log: <code>{logPath}</code>
+          </div>
+        )}
       </aside>
       <main className="canvas-area">
         <GraphCanvas

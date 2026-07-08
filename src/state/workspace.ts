@@ -7,7 +7,7 @@
 // binds them to React state and exposes the same surface App used for a
 // single document — dispatch/undo/redo simply target the active tab.
 
-import { useCallback, useMemo, useState, type Dispatch, type SetStateAction } from 'react';
+import { useCallback, useMemo, useRef, useState, type Dispatch, type SetStateAction } from 'react';
 import type { Viewport } from '../plot/viewport.ts';
 import { emptyDocument, makeExpression, type Command, type GcalcDocument } from './document.ts';
 import {
@@ -121,6 +121,10 @@ export interface WorkspaceApi {
   newTab: () => void;
   /** Open a loaded document (share code / file) as a new active tab. */
   openDocument: (doc: GcalcDocument, name?: string, viewport?: Viewport | null) => void;
+  /** Snapshot of every tab for autosave (M8.3): current document + last
+   * workspace-known viewport, keyed by tab id so callers can overlay fresher
+   * live viewports. Referentially stable; reads current state via a ref. */
+  getSessionTabs: () => Array<{ id: number; name: string; doc: GcalcDocument; viewport: Viewport | null }>;
   close: (id: number) => void;
   select: (id: number) => void;
   reportViewport: (viewport: Viewport) => void;
@@ -132,6 +136,19 @@ export function useWorkspace(firstTab: Tab): WorkspaceApi {
   // The initial tab is minted at module scope by the caller — a useState
   // initializer re-runs under StrictMode and would burn tab ids/names.
   const [ws, setWs] = useState<Workspace>({ tabs: [firstTab], activeId: firstTab.id });
+  const wsRef = useRef(ws);
+  wsRef.current = ws;
+
+  const getSessionTabs = useCallback(
+    () =>
+      wsRef.current.tabs.map((t) => ({
+        id: t.id,
+        name: t.name,
+        doc: t.history.present,
+        viewport: t.viewport,
+      })),
+    [],
+  );
 
   const dispatchCmd = useCallback(
     (cmd: Command): void => setWs((w) => dispatchInActive(w, cmd)),
@@ -187,10 +204,11 @@ export function useWorkspace(firstTab: Tab): WorkspaceApi {
       redo: redoCb,
       newTab,
       openDocument,
+      getSessionTabs,
       close,
       select,
       reportViewport,
       setDocDirect,
     };
-  }, [ws, dispatchCmd, undoCb, redoCb, newTab, openDocument, close, select, reportViewport, setDocDirect]);
+  }, [ws, dispatchCmd, undoCb, redoCb, newTab, openDocument, getSessionTabs, close, select, reportViewport, setDocDirect]);
 }
