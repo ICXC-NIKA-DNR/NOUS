@@ -1,7 +1,8 @@
 # gcalc — syntax & feature reference
 
 Everything the app currently understands, plus how to run it. Status:
-M0–M5 complete (scaffold, plotting, sliders, full plot-type coverage, CAS).
+M0–M7 complete (scaffold, plotting, sliders, full plot-type coverage, CAS,
+graph intelligence, folders/tabs/undo).
 
 ## Launch it locally
 
@@ -151,12 +152,53 @@ the sidebar header and applies to every approximate value shown.
 integration (Risch), no symbolic solving past degree 2, no complex numbers,
 no matrix CAS — all documented, deliberate v1 cuts, not bugs.
 
+## Graph intelligence (M6)
+
+- **Hover any curve** for a live readout of its coordinates and instantaneous
+  slope; **click-and-drag along a curve** to trace it. Releasing pins the
+  readout; clicking empty canvas clears it.
+- Slope is a fast numeric estimate by default; the **Δ / d/dx** button in the
+  graph controls switches to the exact CAS derivative (falls back to numeric).
+- Tracing across a break shows an honest label instead of a fake value:
+  *removable hole* (with its limit), *jump*, *vertical asymptote* (dashed
+  line), or *domain boundary* — and the point jumps cleanly past the gap.
+- **Special points are detected symbolically** (the CAS decides, not pixel
+  sampling): roots, extrema (min/max), and intersections appear as dots;
+  intersections keep a label, others reveal theirs when the cursor is near.
+  Exact points display exactly — `y=x` ∩ `y=-x` is `(0, 0)`, never `≈` —
+  and identical curves get an "identical graphs" badge instead of dots.
+- Points bound to one slider, like `(a, a^2)` with slider `a`, get a **drag
+  handle**: drag the point along its path and the slider (plus everything
+  depending on it) updates live.
+- Data-table rows (`[(1,2), (3,4), …]`) get **Fit: linear / quadratic /
+  exponential** in the ∂ menu — least squares, inserted as an editable row
+  with r² in a status note.
+
+## Organization: folders, tabs, undo (M7)
+
+- **Folders**: **+ folder** adds one; drag rows by the **⠿** handle to
+  reorder, or drop onto a folder's middle to move things inside (folders can
+  nest arbitrarily; a folder can't be dropped into itself). The folder's
+  eye icon hides everything inside it — sliders stay in effect even when
+  hidden. Chevron collapses/expands; the name is edited inline; **×**
+  deletes the folder with its contents.
+- **Document tabs**: the strip above the sidebar. **+** opens a fresh graph;
+  each tab keeps its own expression list, folder tree, undo history, and
+  view window — switching back restores exactly where you were. **×** closes
+  (the last tab never closes).
+- **Undo/redo**: **Ctrl/Cmd+Z** and **Ctrl/Cmd+Shift+Z** (or **Ctrl+Y**),
+  plus the ↶ ↷ header buttons. Every content edit is undoable — edits, adds,
+  deletes, visibility, folder operations, drag-and-drop moves. A slider drag
+  (or a typing burst in one row) counts as **one** undo step. Display
+  settings (rad/deg, precision) and folder collapse never enter history.
+
 ## Sidebar & graph controls
 
-- Color chip = show/hide toggle; click **×** to delete a row; **+ add
-  expression** or hit Enter in the last row to add one
+- Color chip = show/hide toggle; click **×** to delete a row; **+ expression**
+  or hit Enter in the last row to add one
 - Live KaTeX preview above each row (fractions, cases, √, greek, upright
   function names vs. italic variables)
-- rad/deg toggle and the precision dropdown are in the sidebar header
-- Graph: drag to pan, scroll/pinch to zoom (cursor-anchored), **⌗** toggles
-  the grid, **⌂** resets the view
+- rad/deg toggle, precision dropdown, and undo/redo are in the sidebar header
+- Graph: drag empty space to pan, scroll/pinch to zoom (cursor-anchored),
+  **⌗** toggles the grid, **Δ/d-dx** picks the trace-slope mode, **⌂** resets
+  the view

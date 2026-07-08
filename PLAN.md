@@ -92,6 +92,21 @@ the current view.
 (modulo timestamps); share code round-trips; kill the process mid-edit →
 relaunch offers recovery; exported SVG opens correctly.
 
+Status: sub-milestones M8.1–M8.4 are defined but **no code exists yet** — a
+future session starts at M8.1.
+- M8.1 serializer + share codes (ids are session-local counters, NOT
+  serialized; reminted on load so opened docs can't collide with live tabs)
+- M8.2 platform layer: Tauri-native dialogs with a browser fallback
+  (blob download / file input) so the preview stays verifiable
+- M8.3 autosave + crash-recovery offer
+- M8.4 PNG + SVG export
+
+⚠ Unverified assumption for M8.2: that dialog-selected paths automatically
+extend the fs plugin's scope in Tauri v2 (i.e. `dialog:default` +
+`fs:default` capabilities suffice for save/open at user-chosen paths). Check
+when wiring — and native dialogs can't be automated in this environment, so
+desktop save/open needs a manual test from the maintainer.
+
 ## M9 — Input polish
 Live autocomplete (function names + templates) as-you-type, search-bar style.
 Clickable error fixes rendered inline from the M1 suggestion machinery. Keyboard

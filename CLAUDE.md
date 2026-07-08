@@ -4,6 +4,10 @@ Free, open-source, cross-platform desktop graphing calculator.
 Desmos-like interactivity, GeoGebra-level CAS depth. MIT licensed.
 Primary users: serious STEM/math users. Secondary: students/educators.
 
+For interaction affordances (hover readouts, trace behavior, snapping, and
+the like), Desmos behavior is the reference default — not just a design
+suggestion. Deviate only deliberately, with a reason.
+
 Read `PLAN.md` for the milestone sequence. Work milestone by milestone; do not
 start a milestone until the previous one's acceptance criteria pass.
 
@@ -82,6 +86,12 @@ Ask the maintainer to choose. Do not silently bundle GPL code into an MIT repo.
 - TypeScript `strict: true`; no `any` in `src/core/`.
 - Every bug fix in `src/core/` lands with a regression test.
 - Commit messages: `M<milestone>: <what>` (e.g. `M2: implicit curve marching squares`).
+- Commit at every milestone checkpoint, including sub-milestones — e.g. commit
+  as `M6.1` when it lands, before the next sub-milestone's work begins, not
+  just at whole-milestone boundaries.
+- Never mint ids/colors/names in React state initializers or updaters —
+  StrictMode double-invokes them (this has bitten twice: color rotation,
+  tab names). Mint in event handlers or at module scope.
 - Keep `README.md` build instructions honest — if a step doesn't work, fix the
   step or the doc in the same commit.
 
