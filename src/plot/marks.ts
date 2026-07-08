@@ -50,19 +50,26 @@ export function drawArrow(
   ctx.fill();
 }
 
+/** One field arrow in screen px, ready to draw (canvas) or emit (SVG). */
+export interface FieldArrow {
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+}
+
 /**
- * Vector field (P(x,y), Q(x,y)): one arrow per grid cell (~spacingPx), all
- * arrows scaled by the same factor so relative magnitudes stay comparable;
- * the longest arrow in view fits the cell.
+ * Vector field sampling (P(x,y), Q(x,y)): one arrow per grid cell
+ * (~spacingPx), all arrows scaled by the same factor so relative magnitudes
+ * stay comparable; the longest arrow in view fits the cell. Shared by the
+ * canvas renderer and the SVG exporter (M8.4).
  */
-export function drawVectorField(
-  ctx: CanvasRenderingContext2D,
+export function sampleFieldArrows(
   P: (x: number, y: number) => number,
   Q: (x: number, y: number) => number,
   vp: Viewport,
-  color: string,
   spacingPx = 48,
-): void {
+): FieldArrow[] {
   const cols = Math.max(2, Math.floor(vp.width / spacingPx));
   const rows = Math.max(2, Math.floor(vp.height / spacingPx));
   const stepX = vp.width / cols;
@@ -92,7 +99,8 @@ export function drawVectorField(
       if (mag > maxMag) maxMag = mag;
     }
   }
-  if (maxMag === 0) return;
+  const arrows: FieldArrow[] = [];
+  if (maxMag === 0) return arrows;
 
   const maxLen = Math.min(stepX, stepY) * 0.85;
   for (const s of samples) {
@@ -101,15 +109,26 @@ export function drawVectorField(
     if (len < 2) continue;
     const ux = s.vx / Math.hypot(s.vx, s.vy);
     const uy = s.vy / Math.hypot(s.vx, s.vy);
-    drawArrow(
-      ctx,
-      s.px - (ux * len) / 2,
-      s.py - (uy * len) / 2,
-      s.px + (ux * len) / 2,
-      s.py + (uy * len) / 2,
-      color,
-      1.5,
-    );
+    arrows.push({
+      x0: s.px - (ux * len) / 2,
+      y0: s.py - (uy * len) / 2,
+      x1: s.px + (ux * len) / 2,
+      y1: s.py + (uy * len) / 2,
+    });
+  }
+  return arrows;
+}
+
+export function drawVectorField(
+  ctx: CanvasRenderingContext2D,
+  P: (x: number, y: number) => number,
+  Q: (x: number, y: number) => number,
+  vp: Viewport,
+  color: string,
+  spacingPx = 48,
+): void {
+  for (const a of sampleFieldArrows(P, Q, vp, spacingPx)) {
+    drawArrow(ctx, a.x0, a.y0, a.x1, a.y1, color, 1.5);
   }
 }
 

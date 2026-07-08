@@ -23,6 +23,14 @@ export interface FilePlatform {
   saveNousFile(contents: string, suggestedName: string): Promise<string | null>;
   /** Prompt for a .nous file and read it. Null when cancelled. */
   openNousFile(): Promise<OpenedFile | null>;
+  /** Save an export (PNG bytes / SVG text) via dialog or download. Resolves
+   * to the chosen file name, or null when cancelled. */
+  saveExport(
+    data: Uint8Array | string,
+    suggestedName: string,
+    ext: string,
+    mime: string,
+  ): Promise<string | null>;
 }
 
 export function isTauri(): boolean {
@@ -57,6 +65,20 @@ const tauriPlatform: FilePlatform = {
     const { readTextFile } = await import('@tauri-apps/plugin-fs');
     return { name: baseName(path), contents: await readTextFile(path) };
   },
+
+  async saveExport(data, suggestedName, ext, mime) {
+    void mime; // download-transport concern only
+    const { save } = await import('@tauri-apps/plugin-dialog');
+    const path = await save({
+      defaultPath: suggestedName,
+      filters: [{ name: ext.toUpperCase(), extensions: [ext] }],
+    });
+    if (path === null) return null;
+    const fs = await import('@tauri-apps/plugin-fs');
+    if (typeof data === 'string') await fs.writeTextFile(path, data);
+    else await fs.writeFile(path, data);
+    return baseName(path);
+  },
 };
 
 /* ------------------------------------------------------------------ */
@@ -90,6 +112,17 @@ const browserPlatform: FilePlatform = {
       input.oncancel = () => resolve(null);
       input.click();
     });
+  },
+
+  saveExport(data, suggestedName, _ext, mime) {
+    const blob = new Blob([data as BlobPart], { type: mime });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = suggestedName;
+    a.click();
+    URL.revokeObjectURL(url);
+    return Promise.resolve(suggestedName);
   },
 };
 

@@ -17,7 +17,9 @@ import {
   type Feature,
 } from '../plot/analysis.ts';
 import { contour, regionMask, type RegionMask } from '../plot/implicit.ts';
-import { drawArrow, drawVectorField, drawWorldPoint } from '../plot/marks.ts';
+import { buildSvg, type SvgElement } from '../plot/exportSvg.ts';
+import { drawArrow, drawVectorField, drawWorldPoint, sampleFieldArrows } from '../plot/marks.ts';
+import { filePlatform } from '../platform/files.ts';
 import { sampleParametric } from '../plot/parametric.ts';
 import { drawCurve, drawGrid, drawRegion, type Theme } from '../plot/render.ts';
 import { toSource } from './toSource.ts';
@@ -435,6 +437,9 @@ function drawFeatures(
     }
   }
 }
+
+/** App background (styles.css --bg) — canvas/SVG can't read CSS variables. */
+const BACKGROUND = '#1b1d21';
 
 const THEME: Theme = {
   grid: '#34373d',
@@ -1006,6 +1011,84 @@ export function GraphCanvas({
     setViewport((vp) => (vp ? defaultViewport(vp.width, vp.height) : vp));
   }, []);
 
+  /* ---- export (M8.4) ---- */
+
+  // PNG: composite the already-rendered layers (grid, static, dynamic,
+  // overlay — so pinned trace labels export too) over the app background.
+  const exportPng = useCallback((): void => {
+    const layers = [gridRef.current, staticRef.current, dynamicRef.current, overlayRef.current];
+    const base = layers[0];
+    if (!base || layers.some((c) => !c)) return;
+    const out = document.createElement('canvas');
+    out.width = base.width;
+    out.height = base.height;
+    const ctx = out.getContext('2d');
+    if (!ctx) return;
+    ctx.fillStyle = BACKGROUND;
+    ctx.fillRect(0, 0, out.width, out.height);
+    for (const layer of layers) ctx.drawImage(layer!, 0, 0);
+    out.toBlob((blob) => {
+      if (!blob) return;
+      blob.arrayBuffer().then((buf) => {
+        filePlatform.saveExport(new Uint8Array(buf), 'graph.png', 'png', 'image/png').catch(() => {});
+      });
+    }, 'image/png');
+  }, []);
+
+  // SVG: re-drive the same sampling engines into vector paths.
+  const exportSvg = useCallback((): void => {
+    const { curves: cs, env: e, viewport: vp } = liveRef.current;
+    if (!vp) return;
+    const elements: SvgElement[] = [];
+    for (const curve of cs) {
+      const artifact = buildArtifact(curve.spec, vp, e);
+      switch (artifact.kind) {
+        case 'segments':
+          elements.push({ kind: 'path', color: curve.color, widthPx: 2, segments: artifact.segments });
+          break;
+        case 'region':
+          // Region fills are raster-only (see exportSvg.ts); boundaries export.
+          for (const b of artifact.boundaries) {
+            elements.push({
+              kind: 'path',
+              color: curve.color,
+              widthPx: 1.75,
+              dash: b.dashed ? [6, 5] : undefined,
+              segments: b.segments,
+            });
+          }
+          break;
+        case 'points':
+          for (const [wx, wy] of artifact.pts) {
+            elements.push({ kind: 'point', color: curve.color, px: xToPx(vp, wx), py: yToPx(vp, wy) });
+          }
+          break;
+        case 'vector':
+          elements.push({
+            kind: 'arrow',
+            color: curve.color,
+            x0: xToPx(vp, artifact.from[0]),
+            y0: yToPx(vp, artifact.from[1]),
+            x1: xToPx(vp, artifact.to[0]),
+            y1: yToPx(vp, artifact.to[1]),
+            widthPx: 2,
+          });
+          break;
+        case 'field': {
+          const spec = curve.spec as Extract<PlotSpec, { type: 'field' }>;
+          for (const a of sampleFieldArrows((x, y) => spec.P(x, y, e), (x, y) => spec.Q(x, y, e), vp)) {
+            elements.push({ kind: 'arrow', color: curve.color, ...a, widthPx: 1.5 });
+          }
+          break;
+        }
+        case 'nothing':
+          break;
+      }
+    }
+    const svg = buildSvg(vp, THEME, BACKGROUND, elements, { grid: showGrid });
+    filePlatform.saveExport(svg, 'graph.svg', 'svg', 'image/svg+xml').catch(() => {});
+  }, [showGrid]);
+
   return (
     <div className="graph-container">
       <canvas ref={gridRef} className="graph-canvas graph-grid-layer" />
@@ -1044,6 +1127,12 @@ export function GraphCanvas({
         </button>
         <button type="button" title="Reset view" onClick={resetView}>
           ⌂
+        </button>
+        <button type="button" title="Export view as PNG" onClick={exportPng}>
+          PNG
+        </button>
+        <button type="button" title="Export view as SVG (vector)" onClick={exportSvg}>
+          SVG
         </button>
       </div>
     </div>

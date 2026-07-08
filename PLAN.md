@@ -92,20 +92,25 @@ the current view.
 (modulo timestamps); share code round-trips; kill the process mid-edit →
 relaunch offers recovery; exported SVG opens correctly.
 
-Status: sub-milestones M8.1–M8.4 are defined but **no code exists yet** — a
-future session starts at M8.1.
-- M8.1 serializer + share codes (ids are session-local counters, NOT
-  serialized; reminted on load so opened docs can't collide with live tabs)
-- M8.2 platform layer: Tauri-native dialogs with a browser fallback
-  (blob download / file input) so the preview stays verifiable
-- M8.3 autosave + crash-recovery offer
-- M8.4 PNG + SVG export
+Status: M8.1–M8.4 all landed (see docs/dev/M8_checkpoint_prompt.md for the
+session spec).
+- M8.1 serializer + share codes — `src/state/serialize.ts` (ids reminted on
+  load), UI in `src/ui/DocActions.tsx`
+- M8.2 platform layer — `src/platform/files.ts`: Tauri-native dialogs with a
+  browser fallback (blob download / file input)
+- M8.3 autosave + crash recovery (`src/state/autosave.ts`,
+  `src/platform/autosave.ts`) + error log (`src/platform/errorlog.ts`)
+- M8.4 PNG + SVG export (`src/plot/exportSvg.ts`, buttons on the canvas)
 
-⚠ Unverified assumption for M8.2: that dialog-selected paths automatically
-extend the fs plugin's scope in Tauri v2 (i.e. `dialog:default` +
-`fs:default` capabilities suffice for save/open at user-chosen paths). Check
-when wiring — and native dialogs can't be automated in this environment, so
-desktop save/open needs a manual test from the maintainer.
+Resolved M8.2 assumption: dialog picks DO extend the fs scope at runtime
+(verified in tauri-plugin-dialog source), but `fs:default` alone was NOT
+enough — explicit `fs:allow-read/write-text-file` (+ `write-file`, applog
+scope) command permissions were required; see
+`src-tauri/capabilities/default.json`.
+
+⚠ Outstanding manual desktop tests (native dialogs can't be automated here):
+save/open via real OS dialogs, and clean-exit marking on window close (wry
+may not fire beforeunload; a Tauri onCloseRequested hook covers it — verify).
 
 ## M9 — Input polish
 Live autocomplete (function names + templates) as-you-type, search-bar style.
