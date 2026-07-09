@@ -123,10 +123,9 @@ fix that edits the expression in place; every listed shortcut works.
 
 Status: M9.1–M9.3 all landed (see docs/dev/M9_checkpoint_prompt.md).
 - M9.1 autocomplete — engine in `src/core/autocomplete.ts`, dropdown in
-  ExpressionRow. Note: the language has no multi-letter user identifiers
-  (unknown words lex as implicit products), so "user-defined f(x)" completion
-  from the checkpoint prompt is inapplicable; defined single-letter names are
-  in the vocabulary but are always fully typed already.
+  ExpressionRow. Its "user-defined f(x) completes" criterion was deferred to
+  M9.5 (the language had no function definitions when M9 landed); M9.5 wires
+  user-function names into the vocabulary with paren insert, satisfying it.
 - M9.2 clickable fixes — new suggestions for invalid-number, stray
   characters, trailing operators; kinds with no mechanical fix (empty-input,
   wrong-arity, not-a-condition, not-a-value, cas-unsupported) documented in
@@ -161,6 +160,21 @@ Design (settled — see docs/dev/M9_5_checkpoint_prompt.md):
 (inlining, not per-sample interpretation); `sin(x) = 1` and `f(x) = f(x-1)`
 produce structured errors; typing `f` in another row autocompletes `f(`;
 `.nous` save/share round-trips documents containing function definitions.
+
+Status: M9.5.1–M9.5.3 all landed.
+- M9.5.1 parsing — `src/core/funcdef.ts` head pre-scan; lexer `callableNames`
+  (parens-required, no bare capture) + parser `userFunctions`.
+- M9.5.2 inlining + cycles — `src/core/inline.ts`; `buildFunctionScope` in
+  analyze.ts marks recursive/duplicate names invalid (error at def + call).
+- M9.5.3 UX — function names autocomplete with `(`; def rows render KaTeX;
+  CAS operates on the inlined body (inline runs before expandCas).
+- Judgment call (flagged): a reserved-name head like `sin(x) = 1` is NOT
+  treated as a shadow-error definition — it stays an implicit-equation plot,
+  so existing plots don't regress. Only non-reserved names with distinct
+  single-letter params become function definitions.
+- Minor: a plot row `y = f(x)` shows its INLINED body (`y = x²`) in the KaTeX
+  preview rather than `f(x)`; revisit in M10 polish if the original notation
+  is preferred.
 
 ## M10 — Release hygiene
 App icon + window/taskbar branding. Verify pastel palette under CVD simulation

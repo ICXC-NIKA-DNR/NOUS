@@ -27,6 +27,22 @@ test('prefix matches rank before substring matches', () => {
   assert.ok(ns.includes('tau'));
 });
 
+test('user-defined function names complete with a paren (M9.5)', () => {
+  const src = 'y = myf';
+  const r = complete(src, src.length, [], ['myfn']);
+  assert.ok(r);
+  assert.equal(r.items[0].name, 'myfn');
+  assert.equal(r.items[0].label, 'myfn(');
+  const applied = applyCompletion(src, r, r.items[0]);
+  assert.equal(applied.source, 'y = myfn(');
+  assert.equal(applied.caret, 'y = myfn('.length); // caret inside the parens
+});
+
+test('a single-letter f defined as a function autocompletes f(', () => {
+  const r = complete('f', 1, [], ['f']);
+  assert.equal(r?.items[0].label, 'f(');
+});
+
 test('defined document names are offered and win dedupe', () => {
   const r = complete('y = a', 5, ['aa', 'abc']);
   const ns = names(r);

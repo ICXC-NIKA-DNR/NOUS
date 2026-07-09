@@ -32,7 +32,14 @@ function complexDocument(): GcalcDocument {
   inner.collapsed = true;
   const outer = makeFolder('trig — π stuff', [makeExpression('y = cos x'), inner]);
   outer.visible = false;
-  const doc = emptyDocument([slider, outer, makeExpression('(a, a^2)')]);
+  // A user-defined function definition (M9.5) — just source text, round-trips
+  // like any other row.
+  const doc = emptyDocument([
+    slider,
+    makeExpression('myfn(x) = a x^2'),
+    outer,
+    makeExpression('(a, a^2)'),
+  ]);
   return { ...doc, angleMode: 'degrees', precision: 8 };
 }
 

@@ -80,12 +80,22 @@ interface RowProps {
   onToggle: (id: number) => void;
   onDelete: (id: number) => void;
   onEnter: () => void;
-  /** Names defined in the document (sliders/values) — autocomplete scope. */
+  /** Slider/value names defined in the document — autocomplete scope. */
   definedNames: ReadonlySet<string>;
+  /** User-defined function names — autocompleted with a paren (M9.5). */
+  definedFunctions: ReadonlySet<string>;
 }
 
 function MathPreview({ analysis, precision }: { analysis: Analysis; precision: number }): JSX.Element | null {
   const html = useMemo(() => {
+    if (analysis.kind === 'function-definition') {
+      // Upright function name, italic params: f(x) = <body>.
+      const head = `\\operatorname{${analysis.name}}\\left(${analysis.params.join(', ')}\\right)`;
+      return katex.renderToString(`${head} = ${toTex(analysis.body)}`, {
+        throwOnError: false,
+        output: 'html',
+      });
+    }
     if (analysis.kind !== 'plot' && analysis.kind !== 'value' && analysis.kind !== 'unsupported') {
       return null;
     }
@@ -163,6 +173,7 @@ export const ExpressionRow = memo(function ExpressionRow({
   onDelete,
   onEnter,
   definedNames,
+  definedFunctions,
 }: RowProps): JSX.Element {
   const id = entry.id;
   const [menuOpen, setMenuOpen] = useState(false);
@@ -180,7 +191,7 @@ export const ExpressionRow = memo(function ExpressionRow({
   }, [entry.source]);
 
   const refreshCompletions = (source: string, caret: number | null): void => {
-    setAc(caret === null ? null : complete(source, caret, definedNames));
+    setAc(caret === null ? null : complete(source, caret, definedNames, definedFunctions));
     setAcIndex(0);
   };
 

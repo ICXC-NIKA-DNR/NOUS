@@ -396,34 +396,36 @@ export function analyze(
 ): Analysis {
   if (source.trim() === '') return { kind: 'empty' };
 
-  let ast: Expr;
+  let parsed: Expr;
   try {
-    ast = expandCas(parse(source, { functionNames: EXTRA_FUNCTIONS, userFunctions: scope.names }));
+    parsed = parse(source, { functionNames: EXTRA_FUNCTIONS, userFunctions: scope.names });
   } catch (e) {
     if (e instanceof GcalcError) return { kind: 'error', diagnostic: e.info };
     throw e;
   }
 
-  // Function definitions are recognized on the raw AST (before inlining would
-  // rewrite the call-shaped LHS away). A name that's unusable (cyclic /
+  // Function definitions are recognized on the raw AST — before inlining would
+  // rewrite the call-shaped LHS away. A name that's unusable (cyclic /
   // duplicated) reports its reason right on the definition row.
-  if (ast.kind === 'relation') {
-    const fnDef = functionDefinition(ast);
+  if (parsed.kind === 'relation') {
+    const fnDef = functionDefinition(parsed);
     if (fnDef !== null) {
       const reason = scope.invalid.get(fnDef.name);
       if (reason !== undefined) {
-        return { kind: 'error', diagnostic: { kind: 'cas-unsupported', message: reason, span: ast.span } };
+        return { kind: 'error', diagnostic: { kind: 'cas-unsupported', message: reason, span: parsed.span } };
       }
-      return { kind: 'function-definition', ast, name: fnDef.name, params: fnDef.params, body: fnDef.body };
+      return { kind: 'function-definition', ast: parsed, name: fnDef.name, params: fnDef.params, body: fnDef.body };
     }
   }
 
   try {
-    // Inline user calls, then classify a plain expression: compile.ts and the
-    // evaluator never see a user function (inlineFunctions raises structured
-    // errors for cyclic/duplicated callees and arity mismatches).
-    const inlined = inlineFunctions(ast, scope.functions, scope.invalid);
-    return classify(inlined, angleMode, defined);
+    // Inline user calls FIRST, then expand inline CAS — so derivative(f(x))
+    // differentiates f's body, not an opaque call. After inlining, compile.ts
+    // and the evaluator never see a user function. inlineFunctions raises
+    // structured errors for cyclic/duplicated callees and arity mismatches.
+    const inlined = inlineFunctions(parsed, scope.functions, scope.invalid);
+    const ast = expandCas(inlined);
+    return classify(ast, angleMode, defined);
   } catch (e) {
     if (e instanceof GcalcError) return { kind: 'error', diagnostic: e.info };
     throw e;

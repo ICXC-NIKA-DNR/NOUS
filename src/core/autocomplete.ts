@@ -65,19 +65,24 @@ function nameCompletion(name: string, kind: Completion['kind']): Completion {
 
 /**
  * Completions for the identifier prefix at `caret`, or null when nothing
- * should be offered. `definedNames` are the document's definition names
- * (sliders/values) — offered ahead of same-rank built-ins.
+ * should be offered. `definedNames` are the document's slider/value names
+ * (inserted bare); `definedFunctions` are user-defined function names
+ * (inserted with `(`, caret inside — M9.5). Both rank ahead of built-ins.
  */
 export function complete(
   source: string,
   caret: number,
   definedNames: Iterable<string> = [],
+  definedFunctions: Iterable<string> = [],
 ): CompletionResult | null {
   const prefix = prefixAt(source, caret);
   if (prefix === null) return null;
 
-  // Assemble the vocabulary. Defined names first so they win dedupe.
+  // Assemble the vocabulary. User names first so they win dedupe.
   const vocabulary = new Map<string, Completion>();
+  for (const n of definedFunctions) {
+    if (n !== '' && !vocabulary.has(n)) vocabulary.set(n, functionCompletion(n, 'defined'));
+  }
   for (const n of definedNames) {
     if (n !== '' && !vocabulary.has(n)) vocabulary.set(n, nameCompletion(n, 'defined'));
   }

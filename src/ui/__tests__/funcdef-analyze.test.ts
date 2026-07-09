@@ -99,3 +99,15 @@ test('a name defined twice is rejected at both definitions', () => {
   assert.equal(a.kind, 'error');
   if (a.kind === 'error') assert.match(a.diagnostic.message, /more than once/);
 });
+
+test('CAS body of a plot using f is the inlined body (derivative works)', () => {
+  // y = f(x) with f(x) = x^2 → the CAS operates on x^2, not an opaque call.
+  const scope = scopeOf('f(x) = x^2', 'y = f(x)');
+  const a = analyze('y = f(x)', 'radians', NONE, scope);
+  assert.equal(a.kind, 'plot');
+  if (a.kind === 'plot' && a.spec.type === 'explicit') {
+    // The body has no user-function call left in it.
+    const hasCall = JSON.stringify(a.spec.body).includes('"callee":"f"');
+    assert.equal(hasCall, false);
+  }
+});

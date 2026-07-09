@@ -764,6 +764,7 @@ export function App(): JSX.Element {
             onDelete={onDelete}
             onEnter={addEntry}
             definedNames={defined}
+            definedFunctions={functionScope.names}
           />
         </div>
       </div>
