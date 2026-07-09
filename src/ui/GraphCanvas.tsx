@@ -201,6 +201,11 @@ const OVERLAY = {
 const HANDLE_HIT_PX = 12; // grab radius for a drag handle
 const CLICK_TRAVEL_PX = 5; // max pointer travel still counted as a click
 const CURVE_PICK_PX = 14; // trace snaps to a curve within this vertical distance
+// Touch (M10.6): fingers are less precise than a cursor — widen pick/grab
+// radii and allow more tap jitter. Pointer events report pointerType, so
+// mouse behavior is unchanged.
+const TOUCH_PICK_SCALE = 2;
+const TOUCH_CLICK_TRAVEL_PX = 12;
 
 function colorForCurve(curves: PlottedCurve[], id: number): string {
   return curves.find((c) => c.id === id)?.color ?? OVERLAY.poi;
@@ -470,6 +475,8 @@ interface PointerState {
   downX: number;
   downY: number;
   travel: number;
+  /** Primary pointer is a touch — widens pick radii and tap-jitter allowance. */
+  isTouch: boolean;
 }
 
 export type SlopeMode = 'numeric' | 'exact';
@@ -629,6 +636,7 @@ export function GraphCanvas({
     downX: 0,
     downY: 0,
     travel: 0,
+    isTouch: false,
   });
   const cacheRef = useRef<Map<number, CacheEntry>>(new Map());
   // Static layer contents as of its last redraw: ordered [id, artifact] pairs.
@@ -779,9 +787,14 @@ export function GraphCanvas({
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, viewport.width, viewport.height);
 
+    // Labels reveal near the live hover position — or, with no hover, near
+    // the pinned trace, so a TAP also surfaces root/extremum/intersection
+    // labels (touch has no hover; M10.6).
     const hoverScreen: [number, number] | null = activeTrace
       ? [activeTrace.sx, activeTrace.sy]
-      : null;
+      : pinnedTrace
+        ? [pinnedTrace.sx, pinnedTrace.sy]
+        : null;
     if (features) drawFeatures(ctx, features, viewport, precision, hoverScreen);
 
     // Coincident curves get a badge, not a field of false intersection dots.
@@ -826,7 +839,7 @@ export function GraphCanvas({
   // no lock, the nearest curve within the pick threshold is chosen (hover /
   // initial press). Returns null when nothing applies.
   const traceCurveAt = useCallback(
-    (sx: number, sy: number, lockedId?: number): TraceState | null => {
+    (sx: number, sy: number, lockedId?: number, pickPx: number = CURVE_PICK_PX): TraceState | null => {
       const { curves: liveCurves, env: liveEnv, viewport: vp, slopeMode: mode } = liveRef.current;
       if (!vp) return null;
       const wx = pxToX(vp, sx);
@@ -853,7 +866,7 @@ export function GraphCanvas({
         const c = liveCurves.find((cur) => cur.id === lockedId);
         picked = c ? asPicked(c) : null;
       } else {
-        let bestDist = CURVE_PICK_PX;
+        let bestDist = pickPx;
         for (const c of liveCurves) {
           if (c.spec.type !== 'explicit') continue;
           const wy = c.spec.f(wx, liveEnv);
@@ -905,18 +918,20 @@ export function GraphCanvas({
     st.mode = 'pan';
     st.dragTarget = null;
     st.traceCurveId = null;
+    st.isTouch = e.pointerType === 'touch';
+    const pickScale = st.isTouch ? TOUCH_PICK_SCALE : 1;
     const { dragPoints: dps, env: liveEnv, viewport: vp } = liveRef.current;
     if (vp) {
       for (const point of dps) {
         const screen = dragPointScreen(point, liveEnv, vp);
-        if (screen && Math.hypot(screen[0] - pos.x, screen[1] - pos.y) <= HANDLE_HIT_PX) {
+        if (screen && Math.hypot(screen[0] - pos.x, screen[1] - pos.y) <= HANDLE_HIT_PX * pickScale) {
           st.mode = 'dragPoint';
           st.dragTarget = point;
           return;
         }
       }
     }
-    const trace = traceCurveAt(pos.x, pos.y);
+    const trace = traceCurveAt(pos.x, pos.y, undefined, CURVE_PICK_PX * pickScale);
     if (trace) {
       st.mode = 'trace';
       st.traceCurveId = trace.curveId;
@@ -996,10 +1011,13 @@ export function GraphCanvas({
       return;
     }
 
-    // A pan that didn't move is a click: on a curve it pins a trace, on empty
-    // canvas it clears the pinned one.
-    if (st.mode === 'pan' && st.travel <= CLICK_TRAVEL_PX) {
-      const trace = traceCurveAt(st.downX, st.downY);
+    // A pan that didn't move is a click/tap: on a curve it pins a trace, on
+    // empty canvas it clears the pinned one. Touch taps jitter more than
+    // mouse clicks and land less precisely — widen both allowances.
+    const clickTravel = st.isTouch ? TOUCH_CLICK_TRAVEL_PX : CLICK_TRAVEL_PX;
+    if (st.mode === 'pan' && st.travel <= clickTravel) {
+      const pickPx = CURVE_PICK_PX * (st.isTouch ? TOUCH_PICK_SCALE : 1);
+      const trace = traceCurveAt(st.downX, st.downY, undefined, pickPx);
       setPinnedTrace(trace); // null when clicking empty space → clears
     }
   }, [traceCurveAt]);
