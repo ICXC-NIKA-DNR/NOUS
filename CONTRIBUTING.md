@@ -1,19 +1,25 @@
 # Contributing
 
-Thanks for helping build gcalc.
+Thanks for helping build NOUS.
 
 ## Ground rules
 
-- `npm test` must pass before any PR. It type-checks the project and runs the
-  core suite (`src/core/__tests__/`).
+- Node.js ≥ 22.18 — the suite runs the TypeScript sources directly via Node's
+  type stripping, so there's no build step to test.
+- `npm test` must pass before any PR. It type-checks the project (`tsc
+  --noEmit`) and runs the full suite (`src/**/__tests__/` — core, UI, state,
+  plot, CAS).
 - Bug fixes in `src/core/` land with a regression test.
 - `src/core/` stays pure TypeScript: no DOM, React, or Tauri imports.
 - Input-syntax changes must update `parser.test.ts` — those tests are the
   spec of record.
 - New user-facing errors should carry a `Suggestion` (see `src/core/errors.ts`)
   whenever a likely fix exists. Generic error strings get rejected in review.
-- Dark theme only; palette changes must remain distinguishable under common
-  color-vision deficiencies.
+- Dark theme only. Curve colors ship as two palettes (Vivid default,
+  Accessible opt-in); the Accessible set must stay distinguishable under
+  deuteranopia / protanopia / tritanopia.
+- Commit messages: `M<milestone>: <what>` (e.g. `M2: implicit curve marching
+  squares`), committing at each sub-milestone, not only whole milestones.
 
 ## Getting started
 
@@ -39,6 +45,6 @@ release automation.
 
 ## Filing issues
 
-Include your OS, the expression(s) involved, and — once the app ships error
-logging — the local log file. Nothing is ever sent automatically; logs stay
-on your machine.
+Include your OS, the expression(s) involved, and the local error-log file
+(its path is shown in the sidebar). Nothing is ever sent automatically; logs
+stay on your machine.

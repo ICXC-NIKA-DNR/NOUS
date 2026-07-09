@@ -36,7 +36,7 @@ DMA-BUF renderer. If panning or slider drags feel choppy, launch with:
 WEBKIT_DISABLE_DMABUF_RENDERER=1 npm run tauri dev
 ```
 
-Canvas rasterization falls back to CPU, which gcalc's renderer is tuned for
+Canvas rasterization falls back to CPU, which NOUS's renderer is tuned for
 (layered canvases, dirty tracking, decimated strokes).
 
 ### Performance harness
