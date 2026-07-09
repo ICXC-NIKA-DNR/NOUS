@@ -197,6 +197,64 @@ test('rejects malformed sliders and viewports', () => {
   assertRejects({ ...good(), viewport: { ...viewport, yMin: Infinity } });
 });
 
+/* ---- hostile input: depth caps and numeric bounds (M10 security pass) ---- */
+
+/** items array holding a folder chain `depth` levels deep, expression leaf. */
+function nestedFolders(depth: number): unknown {
+  let node: unknown = { kind: 'expression', source: 'y=x', colorIndex: 0, visible: true };
+  for (let i = 0; i < depth; i++) {
+    node = { kind: 'folder', name: 'f', collapsed: false, visible: true, children: [node] };
+  }
+  return node;
+}
+
+test('deeply nested folders reject with a structured error, never a stack overflow', () => {
+  // Past the cap: NousFormatError, not RangeError (the pre-fix behavior at
+  // ~20k levels was "Maximum call stack size exceeded").
+  assertRejects({ ...good(), items: [nestedFolders(65)] }, 'children');
+  // 50k levels: build the JSON textually — JSON.stringify is itself recursive
+  // and would overflow in the TEST before the deserializer ever ran. V8's
+  // JSON.parse is iterative, so parseNousJson's own parse step survives and
+  // the depth cap must be what rejects it.
+  const openF = '{"kind":"folder","name":"f","collapsed":false,"visible":true,"children":[';
+  const leaf = '{"kind":"expression","source":"y=x","colorIndex":0,"visible":true}';
+  const deep =
+    '{"format":"nous","version":1,"angleMode":"radians","precision":6,"items":[' +
+    openF.repeat(50_000) +
+    leaf +
+    ']}'.repeat(50_000) +
+    ']}';
+  assert.throws(
+    () => parseNousJson(deep),
+    (err: unknown) => err instanceof NousFormatError && /children/.test(err.message),
+  );
+  // At or under the cap: accepted (the UI can genuinely nest folders).
+  const ok = parseNousJson(JSON.stringify({ ...good(), items: [nestedFolders(64)] }));
+  assert.equal(ok.doc.items.length, 1);
+});
+
+test('colorIndex must be a bounded non-negative integer', () => {
+  const item = (colorIndex: unknown) => ({
+    ...good(),
+    items: [{ kind: 'expression', source: 'y=x', colorIndex, visible: true }],
+  });
+  assertRejects(item(1e308), 'items[0].colorIndex'); // huge finite
+  assertRejects(item(-1), 'items[0].colorIndex');
+  assertRejects(item(2.5), 'items[0].colorIndex');
+  const ok = parseNousJson(JSON.stringify(item(5)));
+  assert.equal(ok.doc.items[0].kind === 'expression' && ok.doc.items[0].colorIndex, 5);
+});
+
+test('viewports with absurd finite magnitudes reject', () => {
+  assertRejects({ ...good(), viewport: { ...viewport, xMax: 1e308 } }, 'viewport');
+  assertRejects({ ...good(), viewport: { ...viewport, width: 1e9 } }, 'viewport');
+  // Generous-but-sane values still load (deep zoom-out is legitimate).
+  const ok = parseNousJson(
+    JSON.stringify({ ...good(), viewport: { ...viewport, xMin: -1e12, xMax: 1e12 } }),
+  );
+  assert.equal(ok.viewport?.xMax, 1e12);
+});
+
 test('rejects truncated and corrupted share codes without side effects', () => {
   const code = encodeShareCode(complexDocument());
   assert.throws(() => decodeShareCode(code.slice(0, code.length - 3)), NousFormatError);

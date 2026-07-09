@@ -79,7 +79,11 @@ export class NousFormatError extends Error {
   readonly path?: string;
 
   constructor(message: string, path?: string) {
-    super(path ? `${message} (at ${path})` : message);
+    // Cap the displayed path: a deeply nested document would otherwise echo
+    // hundreds of `.children[0]` segments into the flash message.
+    const shown =
+      path !== undefined && path.length > 80 ? `${path.slice(0, 40)}…${path.slice(-24)}` : path;
+    super(shown ? `${message} (at ${shown})` : message);
     this.name = 'NousFormatError';
     this.path = path;
   }
@@ -171,20 +175,36 @@ function parseSlider(v: unknown, path: string): SliderMeta {
   };
 }
 
-function parseItem(v: unknown, path: string): Item {
+/** Deserialization recurses per folder level; a hostile document with tens of
+ * thousands of nested folders would blow the call stack (found by fuzzing in
+ * the M10 security pass). Far beyond anything the UI can create — reject with
+ * a structured error instead of crashing. */
+const MAX_FOLDER_DEPTH = 64;
+
+function parseItem(v: unknown, path: string, depth = 0): Item {
   if (!isRecord(v)) throw new NousFormatError('expected an item object', path);
   if (v.kind === 'expression') {
+    const colorIndex = expectFiniteNumber(v.colorIndex, `${path}.colorIndex`);
+    if (!Number.isInteger(colorIndex) || colorIndex < 0 || colorIndex > 1_000_000) {
+      throw new NousFormatError('colorIndex out of range', `${path}.colorIndex`);
+    }
     const item: ExpressionItem = {
       kind: 'expression',
       id: mintId(),
       source: expectString(v.source, `${path}.source`),
-      colorIndex: expectFiniteNumber(v.colorIndex, `${path}.colorIndex`),
+      colorIndex,
       visible: expectBoolean(v.visible, `${path}.visible`),
     };
     if (v.slider !== undefined) item.slider = parseSlider(v.slider, `${path}.slider`);
     return item;
   }
   if (v.kind === 'folder') {
+    if (depth >= MAX_FOLDER_DEPTH) {
+      throw new NousFormatError(
+        `folders nested deeper than ${MAX_FOLDER_DEPTH} levels`,
+        `${path}.children`,
+      );
+    }
     if (!Array.isArray(v.children)) {
       throw new NousFormatError('expected a children array', `${path}.children`);
     }
@@ -194,12 +214,17 @@ function parseItem(v: unknown, path: string): Item {
       name: expectString(v.name, `${path}.name`),
       collapsed: expectBoolean(v.collapsed, `${path}.collapsed`),
       visible: expectBoolean(v.visible, `${path}.visible`),
-      children: v.children.map((c, i) => parseItem(c, `${path}.children[${i}]`)),
+      children: v.children.map((c, i) => parseItem(c, `${path}.children[${i}]`, depth + 1)),
     };
     return folder;
   }
   throw new NousFormatError('unknown item kind — expected "expression" or "folder"', `${path}.kind`);
 }
+
+/** World-coordinate bound for viewports. Generous (the UI zooms out to ~1e10
+ * before precision degrades) but keeps absurd finite values like 1e308 out —
+ * downstream tick/step math would otherwise overflow to Infinity/NaN. */
+const MAX_VIEWPORT_COORD = 1e15;
 
 function parseViewport(v: unknown, path: string): Viewport {
   if (!isRecord(v)) throw new NousFormatError('expected a viewport object', path);
@@ -213,6 +238,10 @@ function parseViewport(v: unknown, path: string): Viewport {
   };
   if (vp.xMin >= vp.xMax || vp.yMin >= vp.yMax || vp.width <= 0 || vp.height <= 0) {
     throw new NousFormatError('viewport ranges must be non-empty', path);
+  }
+  const worldBounds = [vp.xMin, vp.xMax, vp.yMin, vp.yMax];
+  if (worldBounds.some((c) => Math.abs(c) > MAX_VIEWPORT_COORD) || vp.width > 1e6 || vp.height > 1e6) {
+    throw new NousFormatError('viewport out of range', path);
   }
   return vp;
 }

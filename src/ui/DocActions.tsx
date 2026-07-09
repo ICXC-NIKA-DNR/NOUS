@@ -62,8 +62,10 @@ export function DocActions({ makeShareCode, openShareCode, saveFile, openFile }:
       setPasteOpen(false);
       flash('Graph opened in a new tab');
     } catch (err) {
-      if (err instanceof NousFormatError) return flash(err.message, true);
-      throw err;
+      // Pasted codes are untrusted input: surface EVERY failure in the flash
+      // area (matching onOpen), never rethrow — an unexpected error class
+      // must not escape the click handler as a silent uncaught exception.
+      flash(err instanceof Error ? err.message : String(err), true);
     }
   }, [openShareCode, pasteText, flash]);
 
