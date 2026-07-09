@@ -234,7 +234,10 @@ Status: M10.3 landed + M10.4 CI added.
   the Rust tree (cargo-license unavailable offline).
 - CI: `.github/workflows/ci.yml` runs `npm test` (tsc + node:test) on Node 22
   across ubuntu/macos/windows, on push to main + PRs. No Rust/WebView build
-  needed, so it doubles as cross-OS verification of the TS core.
+  needed, so it doubles as cross-OS verification of the TS core. First run
+  GREEN on all three OSes (run 29004792200) — the "CI green" accept met.
+  (Trivial follow-up: bump actions/checkout + setup-node when a major past
+  v4 lands, to silence GitHub's Node-20-runtime deprecation notice.)
 
 Remaining for M10 (all maintainer-gated, can't be done from the sandbox):
 - README clean-clone build on ≥2 OSes (the app build, not just `npm test`).
