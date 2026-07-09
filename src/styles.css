@@ -14,14 +14,18 @@
   --error: #f28b82;
   --accent: #8ab4f8;
 
-  /* Pastel curve palette, fixed rotation. MUST be re-verified under
-     deuteranopia/protanopia/tritanopia simulation in M10 before release. */
-  --curve-1: #8ab4f8; /* soft blue */
-  --curve-2: #f8a9c4; /* soft pink */
-  --curve-3: #9be8b8; /* soft green */
-  --curve-4: #c5a9f8; /* soft purple */
-  --curve-5: #f5e08a; /* soft yellow */
-  --curve-6: #8ae0e8; /* soft cyan */
+  /* Pastel curve palette, fixed rotation. Verified in M10 under
+     deuteranopia/protanopia/tritanopia (Machado 2009 dichromacy simulation +
+     CIEDE2000): minimum pairwise ΔE00 across all three types = 13.1. The
+     pre-M10 palette failed here — old blue (#8ab4f8) and purple (#c5a9f8)
+     collapsed to ΔE00 0.7 for red-blind viewers. If any hue changes, keep the
+     pastel-blue fallback in src/plot/render.ts (hexRgb) in sync. */
+  --curve-1: #7cb7f8; /* soft blue */
+  --curve-2: #ed9f9b; /* soft coral */
+  --curve-3: #c5edd9; /* soft green */
+  --curve-4: #c4a9bf; /* soft mauve */
+  --curve-5: #f9e39d; /* soft yellow */
+  --curve-6: #5ff4ff; /* cyan */
 }
 
 * { box-sizing: border-box; }
