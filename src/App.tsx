@@ -77,6 +77,33 @@ const INITIAL_DOC: GcalcDocument = emptyDocument(
 // would burn tab ids ("Graph 2" as the first tab).
 const INITIAL_TAB = makeTab(INITIAL_DOC);
 
+// Curve-palette preference. This is a viewer-level accessibility choice (which
+// palette is legible to *this* user), so it lives globally in localStorage —
+// NOT in the per-document state serialized into .nous, where opening someone
+// else's vivid-palette file would clobber a colorblind user's choice. "vivid"
+// is the default candy palette; "accessible" is the CVD-verified set. Both are
+// defined as --curve-N vars in styles.css and swapped via a :root attribute,
+// so canvas and SVG export switch together (see cssColor / render below).
+type PaletteMode = 'vivid' | 'accessible';
+const PALETTE_KEY = 'nous.paletteMode';
+function readStoredPalette(): PaletteMode {
+  try {
+    return localStorage.getItem(PALETTE_KEY) === 'accessible' ? 'accessible' : 'vivid';
+  } catch {
+    return 'vivid';
+  }
+}
+// Default 'vivid' is the base :root; only 'accessible' needs the attribute.
+function applyPaletteAttr(mode: PaletteMode): void {
+  const root = document.documentElement;
+  if (mode === 'accessible') root.setAttribute('data-palette', 'accessible');
+  else root.removeAttribute('data-palette');
+}
+// Apply the stored choice at module load, before React's first render, so the
+// canvas resolves the right --curve-N values on the initial paint.
+const INITIAL_PALETTE = readStoredPalette();
+applyPaletteAttr(INITIAL_PALETTE);
+
 const EMPTY_ANALYSIS: Analysis = { kind: 'empty' };
 
 const NO_ACTIONS: readonly CasAction[] = [];
@@ -185,6 +212,17 @@ export function App(): JSX.Element {
   // document-level actions are what the user means everywhere in the app.
   const graphApi = useRef<GraphApi | null>(null);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [paletteMode, setPaletteMode] = useState<PaletteMode>(INITIAL_PALETTE);
+  const changePalette = useCallback((mode: PaletteMode): void => {
+    applyPaletteAttr(mode); // set the :root attr first so getComputedStyle is fresh
+    resolved.length = 0; // drop cached hex → curves re-resolve from the new vars
+    try {
+      localStorage.setItem(PALETTE_KEY, mode);
+    } catch {
+      // ignore storage failures (private mode / quota); the switch still applies live
+    }
+    setPaletteMode(mode);
+  }, []);
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
       if (e.key === 'Escape') {
@@ -323,7 +361,7 @@ export function App(): JSX.Element {
       }
     }
     return out;
-  }, [flat, analyses, env, angleMode]);
+  }, [flat, analyses, env, angleMode, paletteMode]);
 
   // Points bound to exactly one slider are draggable along their path. The
   // defining slider's meta gives the range/step the drag snaps to.
@@ -864,6 +902,16 @@ export function App(): JSX.Element {
                     {p} sig
                   </option>
                 ))}
+              </select>
+            </label>
+            <label className="palette-select" title="Curve color palette (Accessible is colorblind-safe)">
+              <select
+                value={paletteMode}
+                onChange={(e) => changePalette(e.target.value as PaletteMode)}
+                aria-label="Curve color palette"
+              >
+                <option value="vivid">Vivid</option>
+                <option value="accessible">Accessible</option>
               </select>
             </label>
             <button

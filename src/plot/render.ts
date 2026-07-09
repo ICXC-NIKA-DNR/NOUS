@@ -107,7 +107,7 @@ export function drawGrid(ctx: CanvasRenderingContext2D, vp: Viewport, theme: The
 /** Parse "#rrggbb" once for mask tinting. */
 function hexRgb(color: string): [number, number, number] {
   const m = /^#([0-9a-f]{6})$/i.exec(color.trim());
-  if (!m) return [124, 183, 248]; // fallback: pastel blue (--curve-1 #7cb7f8)
+  if (!m) return [138, 180, 248]; // parse-failure fallback only; matches default --curve-1 #8ab4f8
   const v = parseInt(m[1], 16);
   return [(v >> 16) & 0xff, (v >> 8) & 0xff, v & 0xff];
 }

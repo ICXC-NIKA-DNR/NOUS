@@ -14,17 +14,34 @@
   --error: #f28b82;
   --accent: #8ab4f8;
 
-  /* Pastel curve palette, fixed rotation. Verified in M10 under
-     deuteranopia/protanopia/tritanopia (Machado 2009 dichromacy simulation +
-     CIEDE2000): minimum pairwise ΔE00 across all three types = 13.1. The
-     pre-M10 palette failed here — old blue (#8ab4f8) and purple (#c5a9f8)
-     collapsed to ΔE00 0.7 for red-blind viewers. If any hue changes, keep the
-     pastel-blue fallback in src/plot/render.ts (hexRgb) in sync. */
-  --curve-1: #7cb7f8; /* soft blue */
-  --curve-2: #ed9f9b; /* soft coral */
-  --curve-3: #c5edd9; /* soft green */
-  --curve-4: #c4a9bf; /* soft mauve */
-  --curve-5: #f9e39d; /* soft yellow */
+  /* Curve palette, fixed rotation. Two selectable palettes (settings toggle,
+     stored globally in localStorage): the default "vivid" set below, and an
+     opt-in "accessible" set applied via [data-palette="accessible"] on :root
+     (rule just after this block). Both feed the canvas and SVG export through
+     the same --curve-N vars, so the toggle swaps every consumer live.
+     NOTE: the vivid default is NOT colorblind-safe (its blue/purple collapse
+     to ΔE00 0.7 for red-blind viewers) — the accessible palette is the
+     CVD-verified one. Keep the parse-failure fallback in src/plot/render.ts
+     (hexRgb) matched to the default --curve-1. */
+  --curve-1: #8ab4f8; /* vivid blue */
+  --curve-2: #f8a9c4; /* vivid pink */
+  --curve-3: #9be8b8; /* vivid green */
+  --curve-4: #c5a9f8; /* vivid purple */
+  --curve-5: #f5e08a; /* vivid yellow */
+  --curve-6: #8ae0e8; /* vivid cyan */
+}
+
+/* Accessible (colorblind-safe) palette — opt-in via the settings toggle.
+   Verified under deuteranopia/protanopia/tritanopia (Machado 2009 dichromacy
+   simulation + CIEDE2000): minimum pairwise ΔE00 across all three = 13.1, vs
+   the vivid default's 0.7. Same six slots, kept as close to the vivid hues as
+   CVD separation allows (spread in lightness as well as hue). */
+:root[data-palette='accessible'] {
+  --curve-1: #7cb7f8; /* blue */
+  --curve-2: #ed9f9b; /* coral (was pink) */
+  --curve-3: #c5edd9; /* green */
+  --curve-4: #c4a9bf; /* mauve (was purple) */
+  --curve-5: #f9e39d; /* yellow */
   --curve-6: #5ff4ff; /* cyan */
 }
 
@@ -401,7 +418,8 @@ body {
   cursor: default;
 }
 
-.precision-select select {
+.precision-select select,
+.palette-select select {
   background: var(--bg-input);
   color: var(--text-dim);
   border: 1px solid var(--border);
