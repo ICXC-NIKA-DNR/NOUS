@@ -11,7 +11,16 @@ by milestone — see `PLAN.md`. `CLAUDE.md` is the working spec.
 
 - Node.js ≥ 22.18 (the test suite runs TypeScript directly via Node's type stripping)
 - Rust toolchain (stable) — https://rustup.rs
-- Platform WebView deps for Tauri v2 (Linux: `webkit2gtk`; see Tauri's docs)
+- Platform WebView deps for Tauri v2. On Debian/Ubuntu/Mint:
+
+  ```sh
+  sudo apt install libwebkit2gtk-4.1-dev build-essential curl wget file \
+    libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+  ```
+
+  Other distros: see Tauri's prerequisites page
+  (https://v2.tauri.app/start/prerequisites/). Windows and macOS need no
+  extra system packages beyond Rust + Node.
 
 ## Build & run
 
