@@ -239,10 +239,44 @@ Status: M10.3 landed + M10.4 CI added.
   (Trivial follow-up: bump actions/checkout + setup-node when a major past
   v4 lands, to silence GitHub's Node-20-runtime deprecation notice.)
 
-Remaining for M10 (all maintainer-gated, can't be done from the sandbox):
-- README clean-clone build on ≥2 OSes (the app build, not just `npm test`).
-- Real-window visual confirms: icon/branding + palette.
-- Supply the 1024² icon art (`npm run icon`), then enable bundling.
+Status: M10.5 landed — pre-1.0 audit fixes (see the audit findings list in the
+session; F-numbers refer to it).
+- Deserialization hardening (F1/F6/F8): folder nesting capped at 64 levels
+  (20k-deep hostile input previously blew the call stack); share-code import
+  surfaces every failure instead of rethrowing; colorIndex and viewport
+  numeric bounds; hostile-input tests incl. a textually-built 50k-deep doc.
+- dialog permission narrowed to allow-open + allow-save (F7); versions bumped
+  to 0.1.0 everywhere + manifest metadata filled (F2/F3); README got the
+  concrete apt system-deps command (F4).
+- THIRD_PARTY_LICENSES.md (full Inter OFL-1.1 text verbatim) and
+  src-tauri/deny.toml with a cargo-deny CI job (F5) — permissive-only license
+  allowlist + RUSTSEC advisories on every push.
+
+Status: M10.6 landed — Linux packaging + touch groundwork.
+- Icon: src-tauri/app-icon.svg (NOUS mark) → full set via `npm run icon`;
+  bundling ON with targets deb + appimage. Verified on the dev machine:
+  NOUS_0.1.0_amd64.deb + .AppImage build (needs the clean-PATH workaround —
+  miniconda shadows pkg-config), ldd clean, AppImage launches and opens the
+  NOUS window.
+- Touch (Linux touchscreen devices are a target): tap-on-curve already pinned
+  a trace via pointer events; added pointerType-gated 2x pick/grab radii +
+  wider tap-jitter allowance, and POI labels now reveal near the pinned trace
+  (previously hover-only — touch has no hover). Verified with synthetic touch
+  events + canvas-pixel asserts; mouse behavior unchanged.
+- Known touch gap for M11: sidebar hit targets (12px selects, ~26px buttons)
+  are below comfortable finger size; the M11 chrome consolidation should set
+  minimum touch-target sizes while it reworks that row.
+
+**iOS/Android: POSTPONED to a future milestone** (maintainer decision,
+2026-07-09) — to be scoped when actually prioritized. No Xcode/signing/mobile
+work now; hard prerequisite to record for later: iOS builds/signing require a
+Mac + Xcode + Apple Developer account (no Linux path exists). The touch work
+above is for Linux touchscreen devices and stands on its own.
+
+Remaining for M10 (maintainer-gated):
+- README clean-clone build on a second OS (this machine verified Linux).
+- Real-window visual confirms: icon/taskbar branding + palette (+ optionally
+  replace the generated NOUS mark with final art — it's a one-command regen).
 - Tag **v0.1.0** once the above pass.
 
 **Accept:** clean-clone build works by following README alone; CI green; v0.1.0
