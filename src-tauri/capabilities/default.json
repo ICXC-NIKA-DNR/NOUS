@@ -1,11 +1,12 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Main window: native save/open dialogs + fs access at dialog-granted paths. Note (M8.2): dialog picks extend the fs SCOPE at runtime (verified in tauri-plugin-dialog source), but fs:default carries no read/write COMMAND permissions outside app dirs — the explicit allow-read/write-text-file entries below are required.",
+  "description": "Main window: native save/open dialogs + fs access at dialog-granted paths. Note (M8.2): dialog picks extend the fs SCOPE at runtime (verified in tauri-plugin-dialog source), but fs:default carries no read/write COMMAND permissions outside app dirs — the explicit allow-read/write-text-file entries below are required. Dialog permissions are open+save only (M10.5): the app never uses ask/confirm/message, so dialog:default was broader than needed.",
   "windows": ["main"],
   "permissions": [
     "core:default",
-    "dialog:default",
+    "dialog:allow-open",
+    "dialog:allow-save",
     "fs:default",
     "fs:allow-read-text-file",
     "fs:allow-write-text-file",
