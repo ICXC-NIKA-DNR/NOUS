@@ -71,14 +71,17 @@ export type PlotSpec =
       Q: (x: number, y: number, env: Env) => number;
     };
 
+// `ast` is the INLINED, CAS-expanded tree used for compute (CAS operand, deps).
+// `displayAst` is the pre-user-inline tree for the KaTeX preview, so a `y = f(x)`
+// row shows `f(x)`, not its inlined body `x²` (M10.2). Falls back to `ast`.
 export type Analysis =
   | { kind: 'empty' }
   | { kind: 'error'; diagnostic: Diagnostic }
-  | { kind: 'plot'; ast: Expr; spec: PlotSpec; deps: readonly string[] }
-  | { kind: 'value'; ast: Expr; value: number }
+  | { kind: 'plot'; ast: Expr; displayAst?: Expr; spec: PlotSpec; deps: readonly string[] }
+  | { kind: 'value'; ast: Expr; displayAst?: Expr; value: number }
   | { kind: 'definition'; ast: Expr; name: string; value: number }
   | { kind: 'function-definition'; ast: Expr; name: string; params: string[]; body: Expr }
-  | { kind: 'unsupported'; ast: Expr; reason: string };
+  | { kind: 'unsupported'; ast: Expr; displayAst?: Expr; reason: string };
 
 const RESERVED = new Set(['x', 'y', ...FUNCTION_NAMES]);
 /** Names a user function may not take: sampling vars, constants, builtins. */
@@ -425,7 +428,21 @@ export function analyze(
     // structured errors for cyclic/duplicated callees and arity mismatches.
     const inlined = inlineFunctions(parsed, scope.functions, scope.invalid);
     const ast = expandCas(inlined);
-    return classify(ast, angleMode, defined);
+    const result = classify(ast, angleMode, defined);
+    // Attach a display AST for the KaTeX preview: the user's notation with
+    // CAS calls expanded but user functions NOT inlined, so `y = f(x)` renders
+    // as typed instead of its inlined body. CAS applied directly to a user
+    // function can't expand without inlining — fall back to the raw parse.
+    if (result.kind === 'plot' || result.kind === 'value' || result.kind === 'unsupported') {
+      let displayAst: Expr;
+      try {
+        displayAst = expandCas(parsed);
+      } catch {
+        displayAst = parsed;
+      }
+      return { ...result, displayAst };
+    }
+    return result;
   } catch (e) {
     if (e instanceof GcalcError) return { kind: 'error', diagnostic: e.info };
     throw e;

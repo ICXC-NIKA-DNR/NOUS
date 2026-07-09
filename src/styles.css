@@ -420,13 +420,23 @@ body {
 
 .precision-select select,
 .palette-select select {
-  background: var(--bg-input);
+  /* Render our own chevron. WebKitGTK ignores `color-scheme: dark` for the
+     native <select> arrow and draws it in its light theme (real Tauri window
+     only, not the Chromium preview); `appearance: none` + this SVG removes the
+     platform dependency entirely (M10.2). */
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  background-color: var(--bg-input);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='7' viewBox='0 0 10 7'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%239a9da5' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 6px center;
   color: var(--text-dim);
   border: 1px solid var(--border);
   border-radius: 6px;
   font: inherit;
   font-size: 12px;
-  padding: 3px 4px;
+  padding: 3px 20px 3px 6px;
 }
 
 .angle-toggle {

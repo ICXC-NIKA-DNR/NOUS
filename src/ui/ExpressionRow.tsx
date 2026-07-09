@@ -99,10 +99,13 @@ function MathPreview({ analysis, precision }: { analysis: Analysis; precision: n
     if (analysis.kind !== 'plot' && analysis.kind !== 'value' && analysis.kind !== 'unsupported') {
       return null;
     }
+    // Prefer the display AST (pre-user-inline) so `y = f(x)` shows `f(x)`, not
+    // its inlined body; falls back to the compute AST for rows without one.
+    const shown = analysis.displayAst ?? analysis.ast;
     const tex =
       analysis.kind === 'value'
-        ? `${toTex(analysis.ast)} = ${formatValue(analysis.value, precision)}`
-        : toTex(analysis.ast);
+        ? `${toTex(shown)} = ${formatValue(analysis.value, precision)}`
+        : toTex(shown);
     return katex.renderToString(tex, { throwOnError: false, output: 'html' });
   }, [analysis, precision]);
 

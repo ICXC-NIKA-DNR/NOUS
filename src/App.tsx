@@ -176,6 +176,7 @@ export function App(): JSX.Element {
     canRedo,
     newTab,
     openDocument,
+    replaceDocuments,
     getSessionTabs,
     close: closeTab,
     select: selectTab,
@@ -686,12 +687,13 @@ export function App(): JSX.Element {
   }, []);
 
   const onRecover = useCallback((): void => {
-    setRecovery((r) => {
-      if (r) for (const t of r.tabs) openDocument(t.doc, t.name, t.viewport);
-      autosaveStore.clear();
-      return null;
-    });
-  }, [openDocument]);
+    // Replace the workspace with the recovered tabs, rather than appending them
+    // beside the fresh "Graph 1" (M10.2 decision): recovery restores the prior
+    // session as the whole tab set.
+    if (recovery) replaceDocuments(recovery.tabs);
+    autosaveStore.clear();
+    setRecovery(null);
+  }, [recovery, replaceDocuments]);
 
   const onDiscardRecovery = useCallback((): void => {
     autosaveStore.clear();
@@ -968,6 +970,7 @@ export function App(): JSX.Element {
           initialViewport={liveViewports.current.get(activeTabId) ?? savedViewport}
           onViewportChange={onViewportChange}
           apiRef={graphApi}
+          getExportName={activeTabName}
         />
         <PerfHud hudRef={hudRef} toggle={toggle} />
       </main>

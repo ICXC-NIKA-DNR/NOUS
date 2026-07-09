@@ -12,6 +12,7 @@ import {
   initWorkspace,
   makeTab,
   redoInActive,
+  replaceTabs,
   selectTab,
   setTabViewport,
   undoInActive,
@@ -114,4 +115,26 @@ test('selectTab ignores unknown ids; dispatch no-ops keep identity', () => {
   assert.equal(selectTab(ws, 999999), ws);
   // A no-op command (setPrecision to its current value) must not churn state.
   assert.equal(dispatchInActive(ws, { type: 'setPrecision', precision: 6 }), ws);
+});
+
+test('replaceTabs swaps the whole workspace and activates the first (recovery)', () => {
+  let ws = freshWs();
+  // Grow the fresh session so we can prove it's discarded, not appended to.
+  ws = addTab(ws, makeTab(emptyDocument([makeExpression('y = x + 1')])));
+  assert.equal(ws.tabs.length, 2);
+
+  const recovered = [
+    makeTab(emptyDocument([makeExpression('r = 3')]), 'Polar'),
+    makeTab(emptyDocument([makeExpression('y = x^3')]), 'Cubic'),
+  ];
+  ws = replaceTabs(ws, recovered);
+
+  assert.deepEqual(ws.tabs.map((t) => t.id), recovered.map((t) => t.id)); // old tabs gone
+  assert.deepEqual(ws.tabs.map((t) => t.name), ['Polar', 'Cubic']); // saved names kept
+  assert.equal(ws.activeId, recovered[0].id); // first recovered tab active
+});
+
+test('replaceTabs with no tabs is a no-op (workspace keeps ≥1 tab)', () => {
+  const ws = freshWs();
+  assert.equal(replaceTabs(ws, []), ws);
 });

@@ -18,6 +18,7 @@ import {
 } from '../plot/analysis.ts';
 import { contour, regionMask, type RegionMask } from '../plot/implicit.ts';
 import { buildSvg, type SvgElement } from '../plot/exportSvg.ts';
+import { exportBaseName } from './exportName.ts';
 import { drawArrow, drawVectorField, drawWorldPoint, sampleFieldArrows } from '../plot/marks.ts';
 import { filePlatform } from '../platform/files.ts';
 import { sampleParametric } from '../plot/parametric.ts';
@@ -547,6 +548,8 @@ interface Props {
   /** Reports every viewport change. NOTE: fires per pan/zoom frame — store in
    * a ref, not state, or the whole app re-renders at pointer rate. */
   onViewportChange?: (viewport: Viewport) => void;
+  /** Current active-tab name, read at export time to name PNG/SVG files. */
+  getExportName?: () => string;
 }
 
 /** Size a canvas's backing store to the viewport; true if it changed. */
@@ -579,6 +582,7 @@ export function GraphCanvas({
   initialViewport,
   onViewportChange,
   apiRef,
+  getExportName,
 }: Props): JSX.Element {
   // Four stacked canvases. The grid only changes on pan/zoom. Curves split
   // by what changed in this commit: curves that resampled draw on the
@@ -1055,13 +1059,14 @@ export function GraphCanvas({
     ctx.fillStyle = BACKGROUND;
     ctx.fillRect(0, 0, out.width, out.height);
     for (const layer of layers) ctx.drawImage(layer!, 0, 0);
+    const filename = `${exportBaseName(getExportName?.() ?? '')}.png`;
     out.toBlob((blob) => {
       if (!blob) return;
       blob.arrayBuffer().then((buf) => {
-        filePlatform.saveExport(new Uint8Array(buf), 'graph.png', 'png', 'image/png').catch(() => {});
+        filePlatform.saveExport(new Uint8Array(buf), filename, 'png', 'image/png').catch(() => {});
       });
     }, 'image/png');
-  }, []);
+  }, [getExportName]);
 
   // SVG: re-drive the same sampling engines into vector paths.
   const exportSvg = useCallback((): void => {
@@ -1114,8 +1119,9 @@ export function GraphCanvas({
       }
     }
     const svg = buildSvg(vp, THEME, BACKGROUND, elements, { grid: showGrid });
-    filePlatform.saveExport(svg, 'graph.svg', 'svg', 'image/svg+xml').catch(() => {});
-  }, [showGrid]);
+    const filename = `${exportBaseName(getExportName?.() ?? '')}.svg`;
+    filePlatform.saveExport(svg, filename, 'svg', 'image/svg+xml').catch(() => {});
+  }, [showGrid, getExportName]);
 
   return (
     <div className="graph-container">

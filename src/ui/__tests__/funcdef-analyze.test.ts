@@ -6,6 +6,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { analyze, buildFunctionScope, functionDefinition, type Analysis } from '../analyze.ts';
 import { parse } from '../../core/parser.ts';
+import { sexpr } from '../../core/ast.ts';
 
 const NONE: ReadonlySet<string> = new Set();
 
@@ -110,4 +111,37 @@ test('CAS body of a plot using f is the inlined body (derivative works)', () => 
     const hasCall = JSON.stringify(a.spec.body).includes('"callee":"f"');
     assert.equal(hasCall, false);
   }
+});
+
+/* ---- M10.2: preview shows original notation (displayAst), not inlined body ---- */
+
+test('plot y = f(x): displayAst keeps f(x); compute ast is inlined', () => {
+  const scope = scopeOf('f(x) = x^2', 'y = f(x)');
+  const a = analyze('y = f(x)', 'radians', NONE, scope);
+  assert.equal(a.kind, 'plot');
+  if (a.kind === 'plot') {
+    assert.notEqual(a.displayAst, undefined);
+    // Preview AST still calls f; compute AST has inlined it to x^2.
+    assert.match(sexpr(a.displayAst!), /\(f x\)/);
+    assert.doesNotMatch(sexpr(a.ast), /\(f /);
+    assert.notEqual(sexpr(a.displayAst!), sexpr(a.ast));
+  }
+});
+
+test('value f(9): displayAst keeps f(9) while value is 81', () => {
+  const scope = scopeOf('f(x) = x^2', 'f(9)');
+  const a = analyze('f(9)', 'radians', NONE, scope);
+  assert.equal(a.kind, 'value');
+  if (a.kind === 'value') {
+    assert.equal(a.value, 81);
+    assert.match(sexpr(a.displayAst!), /\(f 9\)/);
+    assert.doesNotMatch(sexpr(a.ast), /\(f /);
+  }
+});
+
+test('plain row without user calls: displayAst equals the shown compute AST', () => {
+  const a = analyze('y = x^2', 'radians', NONE);
+  assert.equal(a.kind, 'plot');
+  // No CAS/inline rewrites → display and compute ASTs coincide structurally.
+  if (a.kind === 'plot') assert.equal(sexpr(a.displayAst!), sexpr(a.ast));
 });

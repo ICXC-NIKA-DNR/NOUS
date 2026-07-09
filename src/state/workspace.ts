@@ -85,6 +85,14 @@ export function addTab(ws: Workspace, tab: Tab): Workspace {
   return { tabs: [...ws.tabs, tab], activeId: tab.id };
 }
 
+/** Replace the entire tab set, activating the first (crash recovery restores
+ * the autosaved session in place of the current one — M10.2). No-ops on an
+ * empty set: the workspace invariant is ≥1 tab. */
+export function replaceTabs(ws: Workspace, tabs: Tab[]): Workspace {
+  if (tabs.length === 0) return ws;
+  return { tabs, activeId: tabs[0].id };
+}
+
 /** Close a tab. The last tab never closes; closing the active tab activates
  * its right neighbour (or the new last tab). */
 export function closeTab(ws: Workspace, id: number): Workspace {
@@ -121,6 +129,10 @@ export interface WorkspaceApi {
   newTab: () => void;
   /** Open a loaded document (share code / file) as a new active tab. */
   openDocument: (doc: GcalcDocument, name?: string, viewport?: Viewport | null) => void;
+  /** Replace the whole workspace with a set of documents (crash recovery). */
+  replaceDocuments: (
+    sessions: Array<{ doc: GcalcDocument; name?: string; viewport?: Viewport | null }>,
+  ) => void;
   /** Snapshot of every tab for autosave (M8.3): current document + last
    * workspace-known viewport, keyed by tab id so callers can overlay fresher
    * live viewports. Referentially stable; reads current state via a ref. */
@@ -174,6 +186,19 @@ export function useWorkspace(firstTab: Tab): WorkspaceApi {
     [],
   );
 
+  const replaceDocuments = useCallback(
+    (sessions: Array<{ doc: GcalcDocument; name?: string; viewport?: Viewport | null }>): void => {
+      // Mint tabs here (event handler), never inside the state updater (StrictMode).
+      const tabs = sessions.map((s) => {
+        const tab = makeTab(s.doc, s.name);
+        if (s.viewport) tab.viewport = s.viewport;
+        return tab;
+      });
+      setWs((w) => replaceTabs(w, tabs));
+    },
+    [],
+  );
+
   const reportViewport = useCallback((viewport: Viewport): void => {
     setWs((w) => setTabViewport(w, w.activeId, viewport));
   }, []);
@@ -204,11 +229,12 @@ export function useWorkspace(firstTab: Tab): WorkspaceApi {
       redo: redoCb,
       newTab,
       openDocument,
+      replaceDocuments,
       getSessionTabs,
       close,
       select,
       reportViewport,
       setDocDirect,
     };
-  }, [ws, dispatchCmd, undoCb, redoCb, newTab, openDocument, getSessionTabs, close, select, reportViewport, setDocDirect]);
+  }, [ws, dispatchCmd, undoCb, redoCb, newTab, openDocument, replaceDocuments, getSessionTabs, close, select, reportViewport, setDocDirect]);
 }
