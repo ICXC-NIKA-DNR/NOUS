@@ -21,6 +21,12 @@ function perfCount(): number {
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
 }
 
+/** ?perf=N&fn=1 routes every curve through a user function (M9.5): tests that
+ * inlining doesn't regress the drag/redraw gate at scale. */
+function perfUsesFunctions(): boolean {
+  return typeof location !== 'undefined' && new URLSearchParams(location.search).get('fn') !== null;
+}
+
 const SLIDERS: Array<[string, number]> = [
   ['a', 1],
   ['b', 1],
@@ -77,6 +83,16 @@ export function perfItems(): Item[] | null {
   const items: Item[] = SLIDERS.map(([name, value]) =>
     makeExpression(`${name} = ${value}`, { min: -10, max: 10, step: 0.1 }),
   );
+  if (perfUsesFunctions()) {
+    // Every curve calls f, whose body depends on the animated sliders a and b.
+    // So a drag re-inlines and re-samples ALL n curves — the worst case for
+    // the M9.5 inlining path.
+    items.push(makeExpression('f(x) = a sin(x) + b cos(x)'));
+    for (let i = 0; i < n; i++) {
+      items.push(makeExpression(`y = f(x + ${i}/10) / ${(i % 5) + 1}`));
+    }
+    return items;
+  }
   for (let i = 0; i < n; i++) {
     items.push(makeExpression(TEMPLATES[i % TEMPLATES.length](i)));
   }
