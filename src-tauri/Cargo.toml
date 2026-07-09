@@ -1,7 +1,9 @@
 [package]
 name = "nous"
-version = "0.0.1"
+version = "0.1.0"
 description = "Free, open-source desktop graphing calculator"
+authors = ["NOUS contributors"]
+repository = "https://github.com/ICXC-NIKA-DNR/NOUS"
 edition = "2021"
 license = "MIT"
 

@@ -1,7 +1,14 @@
 {
   "name": "nous",
   "private": true,
-  "version": "0.0.1",
+  "version": "0.1.0",
+  "description": "Free, open-source, cross-platform desktop graphing calculator — Desmos-like interactivity, from-scratch CAS",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ICXC-NIKA-DNR/NOUS.git"
+  },
+  "homepage": "https://github.com/ICXC-NIKA-DNR/NOUS",
+  "author": "NOUS contributors",
   "type": "module",
   "license": "MIT",
   "engines": {
