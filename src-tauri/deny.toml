@@ -1,0 +1,42 @@
+# cargo-deny config (M10.5): enforce a permissive-only license allowlist and
+# known-advisory checks over the full Rust crate tree. Run locally with
+# `cargo deny check` (cargo install cargo-deny); CI runs it on every push.
+# Rationale: the npm tree was audited by hand (docs/dev/licensing-audit.md);
+# this closes the same gap for the Rust side, where cargo-license wasn't
+# available offline.
+
+[advisories]
+version = 2
+yanked = "deny"
+ignore = []
+
+[licenses]
+version = 2
+confidence-threshold = 0.9
+allow = [
+  "MIT",
+  "Apache-2.0",
+  "Apache-2.0 WITH LLVM-exception",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "ISC",
+  "Zlib",
+  "Unicode-DFS-2016",
+  "Unicode-3.0",
+  "CC0-1.0",
+  "OFL-1.1",
+  "BSL-1.0",
+]
+exceptions = []
+# Deliberately NOT allowing MPL-2.0 / GPL / LGPL — cargo-deny will flag any
+# crate that pulls one in so it becomes a conscious decision, not a silent
+# import into an MIT app.
+
+[bans]
+multiple-versions = "warn"
+wildcards = "allow"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
