@@ -33,8 +33,10 @@ jobs:
       # Enforces src-tauri/deny.toml: permissive-only license allowlist and
       # RUSTSEC advisories over the full Rust crate tree (M10.5 audit item —
       # the npm tree is audited by hand, this keeps the Rust side honest).
+      # No explicit --config: cargo-deny picks up deny.toml beside the
+      # manifest (src-tauri/deny.toml). Passing it via `arguments` breaks —
+      # the action puts those args before the `check` subcommand.
       - uses: EmbarkStudios/cargo-deny-action@v2
         with:
           manifest-path: src-tauri/Cargo.toml
           command: check
-          arguments: --config src-tauri/deny.toml
