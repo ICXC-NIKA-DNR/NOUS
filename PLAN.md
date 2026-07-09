@@ -225,8 +225,22 @@ Status: M10.2 landed (the four "Known UI polish" items above).
   (`appearance: none`) on both selects, removing the platform dependency — so
   the real-window re-check is no longer needed for this item.
 
-Remaining for M10: M10.3 (CONTRIBUTING/README clean-clone, licensing audit),
-M10.4 (CI + v0.1.0 tag), plus the maintainer-only items noted under M10.1.
+Status: M10.3 landed + M10.4 CI added.
+- Docs: CONTRIBUTING finalized (naming, full test suite, Node ≥22.18,
+  commit-message format, two-palette CVD note); README stale "gcalc" fixed.
+- Licensing audit (docs/dev/licensing-audit.md): MIT throughout, zero copyleft
+  across 82 npm deps; CAS confirmed from-scratch/Giac-free. Follow-ups (not
+  blockers): ship the Inter OFL license with installers; add `cargo deny` for
+  the Rust tree (cargo-license unavailable offline).
+- CI: `.github/workflows/ci.yml` runs `npm test` (tsc + node:test) on Node 22
+  across ubuntu/macos/windows, on push to main + PRs. No Rust/WebView build
+  needed, so it doubles as cross-OS verification of the TS core.
+
+Remaining for M10 (all maintainer-gated, can't be done from the sandbox):
+- README clean-clone build on ≥2 OSes (the app build, not just `npm test`).
+- Real-window visual confirms: icon/branding + palette.
+- Supply the 1024² icon art (`npm run icon`), then enable bundling.
+- Tag **v0.1.0** once the above pass.
 
 **Accept:** clean-clone build works by following README alone; CI green; v0.1.0
 tag.
