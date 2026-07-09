@@ -20,7 +20,7 @@
     "preview": "vite preview",
     "test": "tsc --noEmit && node --test \"src/**/__tests__/*.test.ts\"",
     "tauri": "tauri",
-    "icon": "tauri icon src-tauri/app-icon.png -o src-tauri/icons"
+    "icon": "tauri icon src-tauri/app-icon.svg -o src-tauri/icons"
   },
   "dependencies": {
     "@fontsource/inter": "^5.2.8",
