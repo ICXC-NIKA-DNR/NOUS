@@ -209,8 +209,24 @@ Status: M10.1 landed (see docs/dev/M10_checkpoint_prompt.md).
   README documents the drop-in); the real 1024² art is still to be supplied by
   the maintainer, so the placeholder icon and current config stay for now.
 - Still needs the maintainer's hands: the icon art, and visual confirmation in
-  the real Tauri window (icon/branding, the palette, and the select-arrow item
-  above — none reproduce in the Chromium preview).
+  the real Tauri window (icon/branding and the palette — neither reproduces in
+  the Chromium preview).
+
+Status: M10.2 landed (the four "Known UI polish" items above).
+- Export filenames after the tab: pure `exportBaseName()` (src/ui/exportName.ts,
+  node:test-covered) derives a safe name from the active tab; GraphCanvas gets
+  it via `getExportName`. Verified live — a "Graph 1" tab exports "Graph 1.svg".
+- Crash-recovery REPLACES the workspace: `replaceTabs()`/`replaceDocuments()`;
+  `onRecover` swaps the whole tab set (no stray "Graph 1"). Pure-helper tested.
+- Inlined-body preview fixed: `analyze` attaches a `displayAst` (pre-user-inline)
+  used only by the KaTeX preview; `ast` stays the inlined compute/CAS operand.
+  `y = f(x)` now previews as typed, not `y = x²`. Divergence node:test-covered.
+- WebKitGTK select arrow: replaced the native arrow with a custom SVG chevron
+  (`appearance: none`) on both selects, removing the platform dependency — so
+  the real-window re-check is no longer needed for this item.
+
+Remaining for M10: M10.3 (CONTRIBUTING/README clean-clone, licensing audit),
+M10.4 (CI + v0.1.0 tag), plus the maintainer-only items noted under M10.1.
 
 **Accept:** clean-clone build works by following README alone; CI green; v0.1.0
 tag.
