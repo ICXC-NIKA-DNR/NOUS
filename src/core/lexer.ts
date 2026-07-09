@@ -42,10 +42,18 @@ export interface Token {
 
 export interface LexOptions {
   /**
-   * Extra multi-letter names to treat as single identifiers (user-defined
-   * functions/variables). Single letters never need declaring.
+   * Extra multi-letter names to treat as single identifiers (built-in-like
+   * function names such as `derivative`). Single letters never need declaring.
    */
   extraNames?: Iterable<string>;
+  /**
+   * User-defined function names (M9.5). Recognized as a whole identifier ONLY
+   * when the letter run equals the name AND is immediately followed by `(` —
+   * never in greedy segmentation. So `ab(x)` calls `ab`, but a bare `abx`
+   * stays `a·b·x`: implicit multiplication never silently captures a user
+   * function name (maintainer decision: parens required at call sites).
+   */
+  callableNames?: Iterable<string>;
 }
 
 const isDigit = (c: string) => c >= '0' && c <= '9';
@@ -61,8 +69,19 @@ export function lex(source: string, options: LexOptions = {}): Token[] {
       functionNames.add(n);
     }
   }
-  // Longest-first list for greedy matching.
+  // User functions: callable (so nearestName can suggest them) but kept OUT
+  // of `known`, so they never join greedy segmentation. Multi-letter only —
+  // single letters are always their own identifiers.
+  const callable = new Set<string>();
+  if (options.callableNames) {
+    for (const n of options.callableNames) {
+      if (n.length > 1) callable.add(n);
+      functionNames.add(n);
+    }
+  }
+  // Longest-first lists for greedy matching.
   const knownByLength = [...known].sort((a, b) => b.length - a.length);
+  const callableByLength = [...callable].sort((a, b) => b.length - a.length);
 
   const tokens: Token[] = [];
   let i = 0;
@@ -148,6 +167,7 @@ export function lex(source: string, options: LexOptions = {}): Token[] {
       if (
         run.length >= 3 &&
         !known.has(run) &&
+        !callable.has(run) &&
         source[k] === '(' &&
         nearestName(run, functionNames) !== null
       ) {
@@ -155,15 +175,29 @@ export function lex(source: string, options: LexOptions = {}): Token[] {
         continue;
       }
 
-      // Greedy longest-known-name segmentation; leftovers are single letters.
+      // Greedy segmentation. A user function name matches only as the final
+      // segment immediately followed by `(` (it's being applied); otherwise
+      // the run splits against built-in/constant names, leftovers as single
+      // letters.
+      const appliedHere = source[runStart + run.length] === '(';
       let pos = 0;
       while (pos < run.length) {
         const segStart = runStart + pos;
         let matched: string | null = null;
-        for (const name of knownByLength) {
-          if (name.length > 1 && run.startsWith(name, pos)) {
-            matched = name;
-            break;
+        if (appliedHere) {
+          for (const name of callableByLength) {
+            if (run.startsWith(name, pos) && pos + name.length === run.length) {
+              matched = name;
+              break;
+            }
+          }
+        }
+        if (matched === null) {
+          for (const name of knownByLength) {
+            if (name.length > 1 && run.startsWith(name, pos)) {
+              matched = name;
+              break;
+            }
           }
         }
         const seg = matched ?? run[pos];

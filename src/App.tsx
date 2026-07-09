@@ -28,9 +28,18 @@ import { filePlatform } from './platform/files.ts';
 import { packSession, unpackSession, type UnpackedSession } from './state/autosave.ts';
 import { decodeShareCode, documentToJson, encodeShareCode, parseNousJson } from './state/serialize.ts';
 import { makeTab, useWorkspace } from './state/workspace.ts';
+import type { UserFunction } from './core/evaluator.ts';
+import { scanFunctionHead } from './core/funcdef.ts';
 import { DocActions } from './ui/DocActions.tsx';
 import type { Viewport } from './plot/viewport.ts';
-import { analyze, definitionName, formatValue, type Analysis } from './ui/analyze.ts';
+import {
+  analyze,
+  definitionName,
+  formatValue,
+  isReservedFunctionName,
+  parseUserFunction,
+  type Analysis,
+} from './ui/analyze.ts';
 import {
   curveColorVar,
   DEFAULT_SLIDER,
@@ -255,6 +264,43 @@ export function App(): JSX.Element {
 
   const definedKey = useMemo(() => [...defined].sort().join(','), [defined]);
 
+  // Pass 1b (M9.5): harvest user-function names textually (the head pre-scan),
+  // then parse each definition row with those names known to build the
+  // params+body map. Two passes break the chicken-and-egg: a call needs the
+  // name to lex/parse, and the name comes from the (unparsed) definition head.
+  const functionNames = useMemo(() => {
+    const names = new Set<string>();
+    for (const { item } of flat) {
+      const head = scanFunctionHead(item.source);
+      if (head !== null && !isReservedFunctionName(head.name)) names.add(head.name);
+    }
+    return names;
+  }, [flat]);
+  const functionNamesKey = useMemo(() => [...functionNames].sort().join(','), [functionNames]);
+
+  const functions = useMemo(() => {
+    const map = new Map<string, UserFunction>();
+    for (const { item } of flat) {
+      const parsed = parseUserFunction(item.source, functionNames);
+      // First definition of a name wins; duplicates are caught in analysis.
+      if (parsed !== null && !map.has(parsed.name)) {
+        map.set(parsed.name, { params: parsed.params, body: parsed.body });
+      }
+    }
+    return map;
+    // functionNamesKey (not the Set identity) gates rebuilds.
+  }, [flat, functionNamesKey]);
+
+  // Cache key ingredient: the text of every definition row, so editing a
+  // function body re-analyzes the rows that call it.
+  const functionsKey = useMemo(() => {
+    const parts: string[] = [];
+    for (const { item } of flat) {
+      if (scanFunctionHead(item.source) !== null) parts.push(item.source);
+    }
+    return parts.join('\n');
+  }, [flat]);
+
   // Pass 2: full analysis, memoized across renders keyed by everything that
   // affects the result — so slider drags re-analyze only the dragged row.
   const cache = useRef(new Map<string, Analysis>());
@@ -262,14 +308,17 @@ export function App(): JSX.Element {
     const fresh = new Map<string, Analysis>();
     const out = new Map<number, Analysis>();
     for (const { item } of flat) {
-      const key = `${angleMode}|${definedKey}|${item.source}`;
-      const hit = cache.current.get(key) ?? fresh.get(key) ?? analyze(item.source, angleMode, defined);
+      const key = `${angleMode}|${definedKey}|${functionsKey}|${item.source}`;
+      const hit =
+        cache.current.get(key) ??
+        fresh.get(key) ??
+        analyze(item.source, angleMode, defined, functions);
       fresh.set(key, hit);
       out.set(item.id, hit);
     }
     cache.current = fresh;
     return out;
-  }, [flat, angleMode, defined, definedKey]);
+  }, [flat, angleMode, defined, definedKey, functions, functionsKey]);
 
   // Shared env: slider values by name (all definitions, visibility-independent).
   const env = useMemo(() => {

@@ -11,7 +11,13 @@ import type { Expr, Relation, RelOp, Restriction, Span } from '../core/ast.ts';
 import { engine } from '../cas/engine.ts';
 import { compile, compileCondition, type CompiledFn, type Env } from '../core/compile.ts';
 import { fail, GcalcError, type Diagnostic, type Edit } from '../core/errors.ts';
-import { evaluate, makeContext, type AngleMode, type EvalContext } from '../core/evaluator.ts';
+import {
+  evaluate,
+  makeContext,
+  type AngleMode,
+  type EvalContext,
+  type UserFunction,
+} from '../core/evaluator.ts';
 import { CONSTANTS, FUNCTION_NAMES } from '../core/names.ts';
 import { parse } from '../core/parser.ts';
 
@@ -69,9 +75,16 @@ export type Analysis =
   | { kind: 'plot'; ast: Expr; spec: PlotSpec; deps: readonly string[] }
   | { kind: 'value'; ast: Expr; value: number }
   | { kind: 'definition'; ast: Expr; name: string; value: number }
+  | { kind: 'function-definition'; ast: Expr; name: string; params: string[]; body: Expr }
   | { kind: 'unsupported'; ast: Expr; reason: string };
 
 const RESERVED = new Set(['x', 'y', ...FUNCTION_NAMES]);
+/** Names a user function may not take: sampling vars, constants, builtins. */
+const RESERVED_FUNCTION_NAMES = new Set(['x', 'y', 'r', 'theta', ...FUNCTION_NAMES, ...Object.keys(CONSTANTS)]);
+
+export function isReservedFunctionName(name: string): boolean {
+  return RESERVED_FUNCTION_NAMES.has(name);
+}
 /** Registered so the lexer keeps these words whole. */
 const EXTRA_FUNCTIONS = ['vector', 'derivative', 'integral'];
 
@@ -247,6 +260,49 @@ function definitionParts(rel: Relation): { name: string; rhs: Expr } | null {
 }
 
 /**
+ * A function definition `name(p, q, …) = body` (M9.5). The LHS must be the
+ * call (definitions read left-to-right); the name must be non-reserved and
+ * every parameter a distinct single-letter identifier. Reserved-name heads
+ * (`sin(x) = 1`) return null and fall through to the implicit-equation
+ * interpretation, so existing plots don't regress.
+ */
+export function functionDefinition(
+  rel: Relation,
+): { name: string; params: string[]; body: Expr } | null {
+  if (rel.ops.length !== 1 || rel.ops[0] !== '=') return null;
+  const lhs = rel.operands[0];
+  if (lhs.kind !== 'call' || isReservedFunctionName(lhs.callee)) return null;
+  const params: string[] = [];
+  for (const arg of lhs.args) {
+    if (arg.kind !== 'ident' || arg.name.length !== 1 || params.includes(arg.name)) return null;
+    params.push(arg.name);
+  }
+  if (params.length === 0) return null;
+  return { name: lhs.callee, params, body: rel.operands[1] };
+}
+
+/**
+ * Parse a row as a function definition, with `fnNames` known so the LHS and
+ * any user calls in the body resolve. Returns null when the row isn't a
+ * definition or doesn't parse. Used by App to build the function map before
+ * per-row analysis (the two-pass naming flow).
+ */
+export function parseUserFunction(
+  source: string,
+  fnNames: Iterable<string>,
+): { name: string; params: string[]; body: Expr } | null {
+  if (source.trim() === '') return null;
+  let ast: Expr;
+  try {
+    ast = expandCas(parse(source, { functionNames: EXTRA_FUNCTIONS, userFunctions: fnNames }));
+  } catch {
+    return null;
+  }
+  if (ast.kind !== 'relation') return null;
+  return functionDefinition(ast);
+}
+
+/**
  * Try to read a restriction condition as bounds on `varName`:
  * `a < t`, `t < b`, `a < t < b` (and >-directed forms). Returns the bound
  * expressions or null when the condition isn't a pure bound.
@@ -271,32 +327,53 @@ function matchBounds(rel: Relation, varName: string): { lo?: Expr; hi?: Expr } |
 /* Analyze                                                              */
 /* ------------------------------------------------------------------ */
 
+const NO_FUNCTIONS: ReadonlyMap<string, UserFunction> = new Map();
+
 export function analyze(
   source: string,
   angleMode: AngleMode,
   defined: ReadonlySet<string>,
+  functions: ReadonlyMap<string, UserFunction> = NO_FUNCTIONS,
 ): Analysis {
   if (source.trim() === '') return { kind: 'empty' };
 
   let ast: Expr;
   try {
-    ast = expandCas(parse(source, { functionNames: EXTRA_FUNCTIONS }));
+    ast = expandCas(parse(source, { functionNames: EXTRA_FUNCTIONS, userFunctions: functions.keys() }));
   } catch (e) {
     if (e instanceof GcalcError) return { kind: 'error', diagnostic: e.info };
     throw e;
   }
 
   try {
-    return classify(ast, angleMode, defined);
+    return classify(ast, angleMode, defined, functions);
   } catch (e) {
     if (e instanceof GcalcError) return { kind: 'error', diagnostic: e.info };
+    // A recursive definition (e.g. f(x) = f(x-1)) blows the stack with a
+    // RangeError. Fail safe rather than crashing the app — M9.5.2 replaces
+    // this with up-front cycle detection and a precise message.
+    if (e instanceof RangeError) {
+      return {
+        kind: 'error',
+        diagnostic: {
+          kind: 'cas-unsupported',
+          message: 'This expression is recursive or nested too deeply to evaluate.',
+          span: { start: 0, end: 0 },
+        },
+      };
+    }
     throw e;
   }
 }
 
-function classify(ast: Expr, angleMode: AngleMode, defined: ReadonlySet<string>): Analysis {
+function classify(
+  ast: Expr,
+  angleMode: AngleMode,
+  defined: ReadonlySet<string>,
+  functions: ReadonlyMap<string, UserFunction>,
+): Analysis {
   const opts = { angleMode };
-  const coldCtx: EvalContext = makeContext({ angleMode });
+  const coldCtx: EvalContext = makeContext({ angleMode, functions });
 
   let core: Expr = ast;
   let restriction: Restriction | null = null;
@@ -405,6 +482,12 @@ function classify(ast: Expr, angleMode: AngleMode, defined: ReadonlySet<string>)
             toRad: angleMode === 'degrees' ? Math.PI / 180 : 1,
           },
         };
+      }
+
+      // Function definition `f(x) = body` (M9.5) — registered, not plotted.
+      const fnDef = !restriction ? functionDefinition(core) : null;
+      if (fnDef !== null) {
+        return { kind: 'function-definition', ast, name: fnDef.name, params: fnDef.params, body: fnDef.body };
       }
 
       const def = definitionParts(core);

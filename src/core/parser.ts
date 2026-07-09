@@ -21,15 +21,28 @@ import { FUNCTION_NAMES } from './names.ts';
 export interface ParseOptions extends LexOptions {
   /** Names to treat as callable functions in addition to the builtins. */
   functionNames?: Iterable<string>;
+  /**
+   * User-defined function names (M9.5). Callable, but REQUIRE parentheses at
+   * the call site (no paren-less application) and are kept out of greedy
+   * lexer segmentation. Any length; single-letter ones rely on the parser
+   * for the parens rule since the lexer always emits them as identifiers.
+   */
+  userFunctions?: Iterable<string>;
 }
 
 export function parse(source: string, options: ParseOptions = {}): Expr {
   const functions = new Set<string>(FUNCTION_NAMES);
   if (options.functionNames) for (const n of options.functionNames) functions.add(n);
-  const extraNames = new Set<string>(options.extraNames ?? []);
-  for (const n of functions) if (n.length > 1) extraNames.add(n);
+  // User functions are callable but parens-required (tracked separately).
+  const userFns = new Set<string>(options.userFunctions ?? []);
+  for (const n of userFns) functions.add(n);
 
-  const tokens = lex(source, { extraNames });
+  // Built-in-like multi-letter names go to the lexer as whole identifiers;
+  // user functions go via callableNames (applied-with-parens only).
+  const extraNames = new Set<string>(options.extraNames ?? []);
+  for (const n of functions) if (n.length > 1 && !userFns.has(n)) extraNames.add(n);
+
+  const tokens = lex(source, { extraNames, callableNames: userFns });
   let pos = 0;
   let absDepth = 0;
 
@@ -361,7 +374,10 @@ export function parse(source: string, options: ParseOptions = {}): Expr {
         span: spanFrom(nameTok.span, close.span),
       };
     }
-    if (startsPrimary(peek()) && !(peek().type === 'op')) {
+    // User-defined functions require parentheses — no paren-less application
+    // (maintainer decision). Reachable for single-letter user functions,
+    // which the lexer always emits as identifiers regardless of what follows.
+    if (!userFns.has(nameTok.text) && startsPrimary(peek()) && !(peek().type === 'op')) {
       const arg = parseImplicitProduct();
       return {
         kind: 'call',
@@ -373,7 +389,9 @@ export function parse(source: string, options: ParseOptions = {}): Expr {
     }
     fail({
       kind: 'missing-argument',
-      message: `${nameTok.text} needs an argument.`,
+      message: userFns.has(nameTok.text)
+        ? `${nameTok.text} needs parentheses, like ${nameTok.text}(x).`
+        : `${nameTok.text} needs an argument.`,
       span: nameTok.span,
       suggestion: {
         label: `Insert "(" after ${nameTok.text}`,
