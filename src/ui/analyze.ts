@@ -18,6 +18,8 @@ import {
   type EvalContext,
   type UserFunction,
 } from '../core/evaluator.ts';
+import { scanFunctionHead } from '../core/funcdef.ts';
+import { detectFunctionCycles, inlineFunctions } from '../core/inline.ts';
 import { CONSTANTS, FUNCTION_NAMES } from '../core/names.ts';
 import { parse } from '../core/parser.ts';
 
@@ -284,7 +286,7 @@ export function functionDefinition(
 /**
  * Parse a row as a function definition, with `fnNames` known so the LHS and
  * any user calls in the body resolve. Returns null when the row isn't a
- * definition or doesn't parse. Used by App to build the function map before
+ * definition or doesn't parse. Used to build the function scope before
  * per-row analysis (the two-pass naming flow).
  */
 export function parseUserFunction(
@@ -300,6 +302,50 @@ export function parseUserFunction(
   }
   if (ast.kind !== 'relation') return null;
   return functionDefinition(ast);
+}
+
+/**
+ * Build the document's function scope (M9.5) from every row's source. Two
+ * passes: harvest names textually (so calls parse), then parse each
+ * definition body with those names known. Names defined more than once, or
+ * lying on a recursion cycle, are marked `invalid` (usable for parsing,
+ * rejected at definition and call sites).
+ */
+export function buildFunctionScope(sources: Iterable<string>): FunctionScope {
+  const rows = [...sources];
+
+  // Pass 1: names + duplicate detection (textual head scan).
+  const counts = new Map<string, number>();
+  for (const src of rows) {
+    const head = scanFunctionHead(src);
+    if (head !== null && !isReservedFunctionName(head.name)) {
+      counts.set(head.name, (counts.get(head.name) ?? 0) + 1);
+    }
+  }
+  const names = new Set(counts.keys());
+
+  // Pass 2: bodies for uniquely-defined names.
+  const candidates = new Map<string, UserFunction>();
+  for (const src of rows) {
+    const parsed = parseUserFunction(src, names);
+    if (parsed !== null && counts.get(parsed.name) === 1 && !candidates.has(parsed.name)) {
+      candidates.set(parsed.name, { params: parsed.params, body: parsed.body });
+    }
+  }
+
+  const invalid = new Map<string, string>();
+  for (const [name, count] of counts) {
+    if (count > 1) invalid.set(name, `"${name}" is defined more than once.`);
+  }
+  for (const name of detectFunctionCycles(candidates)) {
+    invalid.set(name, `"${name}" is defined in terms of itself (recursion isn't supported).`);
+  }
+
+  const functions = new Map<string, UserFunction>();
+  for (const [name, fn] of candidates) {
+    if (!invalid.has(name)) functions.set(name, fn);
+  }
+  return { names, functions, invalid };
 }
 
 /**
@@ -327,53 +373,66 @@ function matchBounds(rel: Relation, varName: string): { lo?: Expr; hi?: Expr } |
 /* Analyze                                                              */
 /* ------------------------------------------------------------------ */
 
-const NO_FUNCTIONS: ReadonlyMap<string, UserFunction> = new Map();
+/**
+ * User-function context for a document (M9.5). `names` are every defined
+ * function name (needed so calls lex/parse); `functions` are the usable
+ * (acyclic, unambiguous) definitions inlined at call sites; `invalid` maps
+ * unusable names (recursive / defined-more-than-once) to the message shown
+ * wherever they're defined or called.
+ */
+export interface FunctionScope {
+  names: ReadonlySet<string>;
+  functions: ReadonlyMap<string, UserFunction>;
+  invalid: ReadonlyMap<string, string>;
+}
+
+const EMPTY_SCOPE: FunctionScope = { names: new Set(), functions: new Map(), invalid: new Map() };
 
 export function analyze(
   source: string,
   angleMode: AngleMode,
   defined: ReadonlySet<string>,
-  functions: ReadonlyMap<string, UserFunction> = NO_FUNCTIONS,
+  scope: FunctionScope = EMPTY_SCOPE,
 ): Analysis {
   if (source.trim() === '') return { kind: 'empty' };
 
   let ast: Expr;
   try {
-    ast = expandCas(parse(source, { functionNames: EXTRA_FUNCTIONS, userFunctions: functions.keys() }));
+    ast = expandCas(parse(source, { functionNames: EXTRA_FUNCTIONS, userFunctions: scope.names }));
   } catch (e) {
     if (e instanceof GcalcError) return { kind: 'error', diagnostic: e.info };
     throw e;
   }
 
+  // Function definitions are recognized on the raw AST (before inlining would
+  // rewrite the call-shaped LHS away). A name that's unusable (cyclic /
+  // duplicated) reports its reason right on the definition row.
+  if (ast.kind === 'relation') {
+    const fnDef = functionDefinition(ast);
+    if (fnDef !== null) {
+      const reason = scope.invalid.get(fnDef.name);
+      if (reason !== undefined) {
+        return { kind: 'error', diagnostic: { kind: 'cas-unsupported', message: reason, span: ast.span } };
+      }
+      return { kind: 'function-definition', ast, name: fnDef.name, params: fnDef.params, body: fnDef.body };
+    }
+  }
+
   try {
-    return classify(ast, angleMode, defined, functions);
+    // Inline user calls, then classify a plain expression: compile.ts and the
+    // evaluator never see a user function (inlineFunctions raises structured
+    // errors for cyclic/duplicated callees and arity mismatches).
+    const inlined = inlineFunctions(ast, scope.functions, scope.invalid);
+    return classify(inlined, angleMode, defined);
   } catch (e) {
     if (e instanceof GcalcError) return { kind: 'error', diagnostic: e.info };
-    // A recursive definition (e.g. f(x) = f(x-1)) blows the stack with a
-    // RangeError. Fail safe rather than crashing the app — M9.5.2 replaces
-    // this with up-front cycle detection and a precise message.
-    if (e instanceof RangeError) {
-      return {
-        kind: 'error',
-        diagnostic: {
-          kind: 'cas-unsupported',
-          message: 'This expression is recursive or nested too deeply to evaluate.',
-          span: { start: 0, end: 0 },
-        },
-      };
-    }
     throw e;
   }
 }
 
-function classify(
-  ast: Expr,
-  angleMode: AngleMode,
-  defined: ReadonlySet<string>,
-  functions: ReadonlyMap<string, UserFunction>,
-): Analysis {
+function classify(ast: Expr, angleMode: AngleMode, defined: ReadonlySet<string>): Analysis {
   const opts = { angleMode };
-  const coldCtx: EvalContext = makeContext({ angleMode, functions });
+  const coldCtx: EvalContext = makeContext({ angleMode });
 
   let core: Expr = ast;
   let restriction: Restriction | null = null;
@@ -482,12 +541,6 @@ function classify(
             toRad: angleMode === 'degrees' ? Math.PI / 180 : 1,
           },
         };
-      }
-
-      // Function definition `f(x) = body` (M9.5) — registered, not plotted.
-      const fnDef = !restriction ? functionDefinition(core) : null;
-      if (fnDef !== null) {
-        return { kind: 'function-definition', ast, name: fnDef.name, params: fnDef.params, body: fnDef.body };
       }
 
       const def = definitionParts(core);
