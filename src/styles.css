@@ -386,6 +386,11 @@ body {
 
 .header-controls {
   display: flex;
+  /* Wrap instead of overflowing the fixed-width sidebar: the palette select
+     (M10.1) pushed this row past the edge and clipped. Controls flow to a
+     second line when cramped. (Full consolidation into one menu is M11.) */
+  flex-wrap: wrap;
+  justify-content: flex-end;
   align-items: center;
   gap: 8px;
 }
