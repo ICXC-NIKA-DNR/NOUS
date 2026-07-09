@@ -192,8 +192,25 @@ Known UI polish to verify here:
 - PNG/SVG export filenames are hardcoded `graph.png`/`graph.svg`
   (GraphCanvas doesn't know the tab name) — name exports after the tab.
 - Revisit crash-recovery UX (M8.3): "Recover" currently APPENDS the saved
-  tabs next to the fresh "Graph 1"; decide whether it should replace the
-  workspace instead.
+  tabs next to the fresh "Graph 1". DECIDED (maintainer): it should REPLACE
+  the workspace. Implement in M10.2.
+
+Status: M10.1 landed (see docs/dev/M10_checkpoint_prompt.md).
+- Palette CVD: the pre-M10 rotation failed hard — blue (#8ab4f8) and purple
+  (#c5a9f8) collapsed to ΔE00 0.7 under protanopia. Rather than replace it,
+  shipped BOTH as a settings toggle: "Vivid" (default, original candy palette)
+  and "Accessible" (CVD-verified via Machado-2009 dichromacy sim + CIEDE2000,
+  min pairwise ΔE00 13.1). Global localStorage preference — NOT per-document,
+  not in `.nous`; a `:root[data-palette='accessible']` override swaps the
+  --curve-N vars live for both canvas and SVG export. Consequence: the shipped
+  DEFAULT is not colorblind-safe — the CVD hard constraint is now met by
+  opt-in (maintainer's call).
+- Branding: Tauri icon pipeline wired (`npm run icon`, `src-tauri/icons/`
+  README documents the drop-in); the real 1024² art is still to be supplied by
+  the maintainer, so the placeholder icon and current config stay for now.
+- Still needs the maintainer's hands: the icon art, and visual confirmation in
+  the real Tauri window (icon/branding, the palette, and the select-arrow item
+  above — none reproduce in the Chromium preview).
 
 **Accept:** clean-clone build works by following README alone; CI green; v0.1.0
 tag.
