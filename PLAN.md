@@ -230,3 +230,21 @@ M10.4 (CI + v0.1.0 tag), plus the maintainer-only items noted under M10.1.
 
 **Accept:** clean-clone build works by following README alone; CI green; v0.1.0
 tag.
+
+## M11 — Sidebar chrome consolidation + perf HUD *(post-v0.1.0)*
+Deferred out of M10 deliberately (it's UX/feature work, not release hygiene;
+redesigning primary chrome right before the tag adds regression risk). Gets its
+own checkpoint prompt when we start it.
+
+- **Menu consolidation.** Fold palette, Save, Open, Copy/Paste share code, and
+  PNG/SVG export — currently spread across `DocActions`, the settings row, and
+  the canvas overlay — into a single dropdown menu button in the settings row.
+  Precision and angle-mode stay as visible standalone selects, where they are.
+  Requires a new accessible menu/popover component and exposing GraphCanvas's
+  `exportPng`/`exportSvg` through the `GraphApi` ref. (M10.1's header-controls
+  wrap is the interim de-crowd; this replaces it.)
+- **User-visible performance readout.** Surface an fps / frame-time HUD in the
+  normal app (not just the `?perf` harness), toggle-able — the natural toggle
+  lives in the new menu. The `onFrame`/`FrameStats` plumbing and `PerfHud`
+  already exist; keep the HUD itself cheap so it doesn't dent the ≥50-expr
+  redraw target it reports on.
