@@ -61,12 +61,15 @@ allow = [
 # obligations on our MIT code (unlike GPL/LGPL). All five arrive transitively
 # through Tauri v2 (dom_query ← tauri-utils; dirs ← tauri) and are not
 # crates we chose or modify. A new copyleft crate anywhere else still fails.
+# Versions are pinned exactly (maintainer decision, 2026-07-10): a version
+# bump of any of these re-trips cargo-deny, forcing a fresh conscious
+# decision instead of being silently covered by a name-only exception.
 exceptions = [
-  { name = "cssparser", allow = ["MPL-2.0"] },
-  { name = "cssparser-macros", allow = ["MPL-2.0"] },
-  { name = "dtoa-short", allow = ["MPL-2.0"] },
-  { name = "option-ext", allow = ["MPL-2.0"] },
-  { name = "selectors", allow = ["MPL-2.0"] },
+  { name = "cssparser", version = "=0.36.0", allow = ["MPL-2.0"] },
+  { name = "cssparser-macros", version = "=0.6.1", allow = ["MPL-2.0"] },
+  { name = "dtoa-short", version = "=0.3.5", allow = ["MPL-2.0"] },
+  { name = "option-ext", version = "=0.2.0", allow = ["MPL-2.0"] },
+  { name = "selectors", version = "=0.36.1", allow = ["MPL-2.0"] },
 ]
 
 [bans]
