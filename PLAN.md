@@ -236,8 +236,12 @@ Status: M10.3 landed + M10.4 CI added.
   across ubuntu/macos/windows, on push to main + PRs. No Rust/WebView build
   needed, so it doubles as cross-OS verification of the TS core. First run
   GREEN on all three OSes (run 29004792200) — the "CI green" accept met.
-  (Trivial follow-up: bump actions/checkout + setup-node when a major past
-  v4 lands, to silence GitHub's Node-20-runtime deprecation notice.)
+  (Follow-up with a hard deadline: bump actions/checkout + setup-node to
+  their latest tagged versions **before September 16, 2026** — that's when
+  Node.js 20 is fully removed from GitHub-hosted runners. Runners already
+  default to Node 24 as of June 16, 2026, so our workflows are likely
+  executing on Node 24 under the hood; the deprecation warning persisting
+  anyway is a known GitHub runner bug, not a signal the bump happened.)
 
 Status: M10.5 landed — pre-1.0 audit fixes (see the audit findings list in the
 session; F-numbers refer to it).
