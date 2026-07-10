@@ -28,7 +28,7 @@ by milestone — see `PLAN.md`. `CLAUDE.md` is the working spec.
 npm install
 npm test               # type-check + core test suite (no Rust needed)
 npm run tauri dev      # run the desktop app
-npm run tauri build    # release build (bundling is disabled until M10 adds icons)
+npm run tauri build    # release build; bundles a .deb + .AppImage on Linux
 ```
 
 If Tauri CLI versions have drifted from this scaffold, regenerate the config
