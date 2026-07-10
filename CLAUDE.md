@@ -24,7 +24,12 @@ start a milestone until the previous one's acceptance criteria pass.
    (see "compile, don't interpret" below), verify with the perf harness in M3.
 2. **Dark mode is the only theme.** Near-black charcoal background (not pure #000).
    Pastel curve palette (soft blues/pinks/greens/purples/yellows) auto-assigned in
-   fixed rotation, verified distinguishable under deuteranopia/protanopia/tritanopia.
+   fixed rotation. Two palettes ship behind a global settings toggle (M10.1,
+   maintainer decision): **Vivid** (default; NOT CVD-safe — the original
+   rotation collapses under protanopia) and **Accessible** (opt-in;
+   CVD-verified under deuteranopia/protanopia/tritanopia via Machado-2009
+   simulation + CIEDE2000, min pairwise ΔE00 13.1). Any palette change must
+   keep the Accessible variant passing that verification.
 3. **Typography:** UI font = Inter or IBM Plex Sans (bundled, open-source; never
    Arial). Math display = KaTeX-style rendering: italic variables, upright function
    names, proper super/subscripts. Math rendering is separate from the UI font.
