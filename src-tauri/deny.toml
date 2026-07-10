@@ -8,7 +8,32 @@
 [advisories]
 version = 2
 yanked = "deny"
-ignore = []
+ignore = [
+  # All entries below are "unmaintained" advisories (no vulnerability, no
+  # patched version) in crates pulled in transitively by Tauri v2 — nothing
+  # we can fix from this side. Re-evaluate when bumping Tauri.
+  #
+  # gtk-rs GTK3 bindings family — Tauri v2's Linux webview stack
+  # (wry → webkit2gtk) is still on GTK3; gtk-rs dropped the GTK3 bindings.
+  "RUSTSEC-2024-0411", # gdkwayland-sys
+  "RUSTSEC-2024-0412", # gdk
+  "RUSTSEC-2024-0413", # atk
+  "RUSTSEC-2024-0414", # gdkx11-sys
+  "RUSTSEC-2024-0415", # gtk
+  "RUSTSEC-2024-0416", # atk-sys
+  "RUSTSEC-2024-0417", # gdkx11
+  "RUSTSEC-2024-0418", # gdk-sys
+  "RUSTSEC-2024-0419", # gtk3-macros
+  "RUSTSEC-2024-0420", # gtk-sys
+  # proc-macro-error — unmaintained; pulled in by the gtk3-macros stack.
+  "RUSTSEC-2024-0370",
+  # unic-* — unmaintained Unicode helper crates, transitive via Tauri.
+  "RUSTSEC-2025-0075", # unic-char-range
+  "RUSTSEC-2025-0080", # unic-common
+  "RUSTSEC-2025-0081", # unic-char-property
+  "RUSTSEC-2025-0098", # unic-ucd-version
+  "RUSTSEC-2025-0100", # unic-ucd-ident
+]
 
 [licenses]
 version = 2
@@ -27,10 +52,22 @@ allow = [
   "OFL-1.1",
   "BSL-1.0",
 ]
-exceptions = []
-# Deliberately NOT allowing MPL-2.0 / GPL / LGPL — cargo-deny will flag any
-# crate that pulls one in so it becomes a conscious decision, not a silent
-# import into an MIT app.
+# Deliberately NOT allowing MPL-2.0 / GPL / LGPL globally — cargo-deny will
+# flag any crate that pulls one in so it becomes a conscious decision, not a
+# silent import into an MIT app.
+#
+# Per-crate exceptions (the conscious decisions): MPL-2.0 is file-level weak
+# copyleft — using these crates unmodified as dependencies imposes no
+# obligations on our MIT code (unlike GPL/LGPL). All five arrive transitively
+# through Tauri v2 (dom_query ← tauri-utils; dirs ← tauri) and are not
+# crates we chose or modify. A new copyleft crate anywhere else still fails.
+exceptions = [
+  { name = "cssparser", allow = ["MPL-2.0"] },
+  { name = "cssparser-macros", allow = ["MPL-2.0"] },
+  { name = "dtoa-short", allow = ["MPL-2.0"] },
+  { name = "option-ext", allow = ["MPL-2.0"] },
+  { name = "selectors", allow = ["MPL-2.0"] },
+]
 
 [bans]
 multiple-versions = "warn"
