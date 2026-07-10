@@ -1,6 +1,17 @@
 # Session handoff — 2026-07-09
 
-**One-line status:** CI is RED on `main`; the `cargo-deny` job (added this
+> **RESOLVED 2026-07-10** (commits `3032588` + `0d6501b`, CI runs 29077928393
+> and 29077949140 — all jobs green): quick-xml vulns FIXED via `cargo update
+> -p plist` (plist 1.10.0 → patched quick-xml 0.41.0), not ignored; the 16
+> unmaintained advisories ignored with justification in `src-tauri/deny.toml`.
+> Additionally the *license* check was also red (5 MPL-2.0 Tauri-transitive
+> crates — this handoff had only recorded the advisories); resolved with
+> documented per-crate `exceptions`. CLAUDE.md constraint #2 (two-palette
+> design) also done. Remaining for the v0.1.0 tag: the maintainer-gated items
+> in PLAN.md M10 (2-OS clean-clone build, real-window visual confirms, icon
+> art, then the tag itself).
+
+**One-line status (2026-07-09, historical):** CI is RED on `main`; the `cargo-deny` job (added this
 session, M10.5) flags real advisories. This is the *only* thing blocking the
 `v0.1.0` tag — "CI green" is one of the three M10 acceptance criteria.
 Everything else in M10.1–M10.6 is committed, pushed, and otherwise green.
