@@ -278,6 +278,20 @@ export function App(): JSX.Element {
     return () => window.removeEventListener('keydown', onKey);
   }, [undo, redo, dispatch]);
 
+  // Ctrl+wheel anywhere must never reach the WebView: WebKitGTK applies its
+  // native page zoom to any ctrl-modified wheel event that isn't
+  // default-prevented, and GraphCanvas's own listener only covers the canvas.
+  // Non-passive for the same reason as there. Plain scrolling is untouched,
+  // and the canvas handler still zooms the graph (this fires in addition,
+  // not instead — preventDefault twice is harmless).
+  useEffect(() => {
+    const onWheel = (e: WheelEvent): void => {
+      if (e.ctrlKey) e.preventDefault();
+    };
+    window.addEventListener('wheel', onWheel, { passive: false });
+    return () => window.removeEventListener('wheel', onWheel);
+  }, []);
+
   // Expressions in display order, each with its effective (folder-cascaded)
   // visibility. Definitions stay in scope regardless of visibility; only
   // plotting honours effectiveVisible.
