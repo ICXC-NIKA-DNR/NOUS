@@ -71,6 +71,117 @@ Open the app with `?perf=50` appended to the dev URL (edit `devUrl` in
 expressions with an fps HUD and automated slider sweeps. The M3 acceptance
 gate: no sustained drops below ~50 fps while a slider drags.
 
+## Building from source
+
+Complete from-scratch paths — nothing but a terminal and this repo's URL
+required; each block installs the toolchain it needs and is copy-pastable top
+to bottom. If you already have Rust and Node ≥ 22.18, skip to the `git clone`
+lines (or just use [Build & run](#build--run) above).
+
+Status: the **Linux** path is clean-clone verified in this repo
+(`docs/dev/clean-clone-verification-2026-07-10.md`; ~4½ minutes cold on a
+laptop). **Windows and macOS** follow Tauri v2's official prerequisites
+(https://v2.tauri.app/start/prerequisites/) but haven't been clean-clone
+verified here yet.
+
+### Linux (Debian / Ubuntu / Mint)
+
+```sh
+# System packages (Tauri v2 prerequisites + git)
+sudo apt update
+sudo apt install -y libwebkit2gtk-4.1-dev build-essential curl wget file \
+  libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev git
+
+# Rust (skip if `cargo --version` already works)
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+. "$HOME/.cargo/env"
+
+# Node.js ≥ 22.18 via nvm (skip if `node --version` is already ≥ 22.18)
+curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash
+\. "$HOME/.nvm/nvm.sh"
+nvm install 22
+
+# Clone and build
+git clone https://github.com/ICXC-NIKA-DNR/NOUS.git
+cd NOUS
+npm install
+npm run tauri build
+```
+
+Artifacts land in `src-tauri/target/release/bundle/`:
+
+- `deb/NOUS_0.1.0_amd64.deb` — install with `sudo apt install ./NOUS_0.1.0_amd64.deb`, then launch "NOUS" from your app menu.
+- `appimage/NOUS_0.1.0_amd64.AppImage` — no install needed: `chmod +x` it and run it directly.
+
+Other distros: swap the `apt` line for your package manager's equivalents from
+Tauri's prerequisites page; everything else is identical.
+
+### Windows 10 / 11
+
+Run in **PowerShell**:
+
+```powershell
+# Visual Studio C++ Build Tools (the "Desktop development with C++" workload)
+winget install --id Microsoft.VisualStudio.2022.BuildTools -e --override "--wait --passive --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"
+
+# Rust (MSVC toolchain) + git + Node.js LTS (≥ 22.18 required)
+winget install --id Rustlang.Rustup -e
+winget install --id Git.Git -e
+winget install --id OpenJS.NodeJS.LTS -e
+
+# WebView2 runtime: preinstalled on Windows 10 1803+ / Windows 11 — nothing to do.
+```
+
+Open a **new** PowerShell window (so the installs are on PATH), then:
+
+```powershell
+rustup default stable-msvc
+
+git clone https://github.com/ICXC-NIKA-DNR/NOUS.git
+cd NOUS
+npm install
+npm run tauri build -- --bundles nsis
+```
+
+The `--bundles nsis` flag is required: this repo's bundle config lists only the
+Linux targets (deb/appimage), so Windows picks its installer type explicitly.
+
+Artifact: `src-tauri\target\release\bundle\nsis\NOUS_0.1.0_x64-setup.exe` —
+run it to install NOUS.
+
+### macOS
+
+```sh
+# Xcode command line tools (includes git; a GUI prompt appears — accept it)
+xcode-select --install
+
+# Rust
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+. "$HOME/.cargo/env"
+
+# Node.js ≥ 22.18 via nvm
+curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash
+\. "$HOME/.nvm/nvm.sh"
+nvm install 22
+
+# Clone and build
+git clone https://github.com/ICXC-NIKA-DNR/NOUS.git
+cd NOUS
+npm install
+npm run tauri build -- --bundles app,dmg
+```
+
+The `--bundles app,dmg` flag is required for the same reason as on Windows
+(the repo's bundle config lists only Linux targets).
+
+Artifacts in `src-tauri/target/release/bundle/`:
+
+- `macos/NOUS.app` — drag to /Applications, or run in place.
+- `dmg/NOUS_0.1.0_*.dmg` — the distributable disk image.
+
+The build is unsigned, so the first launch needs right-click → Open (or
+System Settings → Privacy & Security → "Open Anyway") to pass Gatekeeper.
+
 ## Layout
 
 ```
