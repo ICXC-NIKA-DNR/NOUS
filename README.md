@@ -48,6 +48,22 @@ WEBKIT_DISABLE_DMABUF_RENDERER=1 npm run tauri dev
 Canvas rasterization falls back to CPU, which NOUS's renderer is tuned for
 (layered canvases, dirty tracking, decimated strokes).
 
+### Linux: trackpad pinch zooms the page, not the graph (known limitation)
+
+On Linux, a trackpad pinch gesture magnifies the whole app window instead of
+zooming the graph. This can't be fixed from inside NOUS: WebKitGTK (the
+webview Tauri uses on Linux) consumes the pinch as a GTK-level gesture and
+scales the page before the event ever reaches the app, so no JavaScript
+handler, CSS rule, or Tauri setting can intercept it — see
+[tauri#13115](https://github.com/tauri-apps/tauri/issues/13115). The only
+known workaround pokes at WebKit's private internals and has caused crashes
+(segfaults) even for its author ([wry#544](https://github.com/tauri-apps/wry/issues/544)),
+so NOUS deliberately doesn't ship it. If a pinch magnified the window,
+pinch in the opposite direction to undo it (or restart the app). To zoom
+the graph: scroll (or Ctrl+scroll), Ctrl+=/-, or pinch directly on a
+touchscreen — those all work as expected; the gap is trackpad pinch only,
+until an upstream WebKitGTK/Tauri option lands.
+
 ### Performance harness
 
 Open the app with `?perf=50` appended to the dev URL (edit `devUrl` in
