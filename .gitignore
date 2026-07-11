@@ -3,3 +3,11 @@ dist/
 src-tauri/target/
 *.local
 src-tauri/gen/
+
+# local env / secrets — never commit, even if one appears later
+.env
+.env.*
+
+# OS junk
+.DS_Store
+Thumbs.db

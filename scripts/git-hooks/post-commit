@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# gcalc auto-push post-commit hook.
+# NOUS auto-push post-commit hook.
 #
 # Pushes the just-committed branch to origin so local history is mirrored on
 # GitHub without a manual `git push`. It runs AFTER the commit is finalized,
