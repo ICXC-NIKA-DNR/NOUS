@@ -1,4 +1,4 @@
-# nous
+# NOUS
 
 Free, open-source, cross-platform desktop graphing calculator.
 Desmos-like interactivity, GeoGebra-level CAS depth. Windows / macOS / Linux.
