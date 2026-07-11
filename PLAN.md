@@ -281,7 +281,19 @@ Remaining for M10 (maintainer-gated):
 - README clean-clone build on a second OS (this machine verified Linux).
 - Real-window visual confirms: icon/taskbar branding + palette (+ optionally
   replace the generated NOUS mark with final art — it's a one-command regen).
+- Windows re-test of expression drag-and-drop (reorder + drop-into-folder),
+  fixed 2026-07-11 via `dragDropEnabled: false` — see note below.
 - Tag **v0.1.0** once the above pass.
+
+Note — `dragDropEnabled: false` in tauri.conf.json is intentional (JSON can't
+carry the comment): with it true (the default), wry on Windows/WebView2
+revokes Chromium's OLE drop target and replaces it with a CF_HDROP-only
+handler, which breaks the app's own HTML5 drag-and-drop (expression reorder /
+drop-into-folder showed the forbidden cursor and never fired dragover/drop).
+Linux/macOS are unaffected either way. If a future feature wants OS-level
+file-drop (drag a file from Explorer to open it), implement it with HTML5
+drop events on the document — do NOT re-enable this flag, or expression
+dragging on Windows breaks again.
 
 **Accept:** clean-clone build works by following README alone; CI green; v0.1.0
 tag.
