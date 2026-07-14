@@ -1,154 +1,169 @@
-# Session handoff — 2026-07-09
+# Session handoff — 2026-07-11
 
-> **RESOLVED 2026-07-10** (commits `3032588` + `0d6501b`, CI runs 29077928393
-> and 29077949140 — all jobs green): quick-xml vulns FIXED via `cargo update
-> -p plist` (plist 1.10.0 → patched quick-xml 0.41.0), not ignored; the 16
-> unmaintained advisories ignored with justification in `src-tauri/deny.toml`.
-> Additionally the *license* check was also red (5 MPL-2.0 Tauri-transitive
-> crates — this handoff had only recorded the advisories); resolved with
-> documented per-crate `exceptions`. CLAUDE.md constraint #2 (two-palette
-> design) also done. Remaining for the v0.1.0 tag: the maintainer-gated items
-> in PLAN.md M10 (2-OS clean-clone build, real-window visual confirms, icon
-> art, then the tag itself).
+**One-line status:** `v0.1.0` is **tagged and released on GitHub** (tag +
+release both point at HEAD `aa1e68b`; `HEAD == origin/main == v0.1.0`), the
+latest CI run on that commit is **GREEN** (run 29140232729, all 4 jobs), and
+this session's live thread was *non-code* — marketing media capture + the
+LinkedIn launch post + a browser preview left running for a perf screenshot.
 
-**One-line status (2026-07-09, historical):** CI is RED on `main`; the `cargo-deny` job (added this
-session, M10.5) flags real advisories. This is the *only* thing blocking the
-`v0.1.0` tag — "CI green" is one of the three M10 acceptance criteria.
-Everything else in M10.1–M10.6 is committed, pushed, and otherwise green.
-
-HEAD when this was written: `f3c485c` (`docs: record M10.5 + M10.6 status`).
-Latest CI run on HEAD: `29047904160` — **failure** (the `cargo deny` job; the
-`npm test` 3-OS matrix is green).
+> NOTE ON COMMIT HASHES: a git history rewrite happened earlier this session
+> (author email `jahernandez.09.27@gmail.com` → `JMHernandez2718@proton.me`
+> via `git filter-repo`, force-pushed). **Every commit hash changed.** All
+> hashes in this file are the current post-rewrite ones. Any older handoff /
+> doc that cites pre-rewrite hashes (e.g. `ee7b834`, `79dcfd0`, `fde2566`)
+> now points at nothing — those are stale by design, not errors.
 
 ---
 
-## 1. Where I am — the CI-red investigation
+## 1. Where I am (live thread at session end)
 
-The `cargo deny (licenses + advisories)` job in `.github/workflows/ci.yml`
-(config `src-tauri/deny.toml`) now runs and reports two classes of finding,
-both treated as errors by our config:
+No code is mid-change. The repo is at a clean tagged release. The last thing
+in flight was **personal marketing media**, not project work:
 
-**A. 2 real vulnerabilities — both in `quick-xml` v0.39.4**
-- `RUSTSEC-2026-0194` — quadratic runtime when checking a start tag for
-  duplicate attribute names.
-- `RUSTSEC-2026-0195` — unbounded namespace-declaration allocation in
-  `NsReader` → memory-exhaustion DoS.
-- Dependency path (BUILD-dependency only, not in the shipped runtime binary):
-  `nous [build-dependencies] → tauri-build → tauri-utils → plist v1.9.0 →
-  quick-xml v0.39.4`. `plist` is used at build time (Info.plist / icon
-  generation), so real-world reachability is low.
+- A **browser preview** was started (Claude Preview MCP, serverId
+  `d65a76fb-bc35-4066-bb4f-39a3e1be203c`) and navigated to
+  `http://localhost:1420/?perf=50` so the maintainer could screenshot the
+  perf-stress HUD at native resolution (the video-extracted frame was grainy).
+  The perf harness auto-animates 50 slider-bound expressions. **This server
+  may still be running** — stop it when done.
+- To enable that preview I created **`.claude/launch.json`** (vite dev config).
+  It is the ONLY uncommitted change in the tree (`git status` shows `?? .claude/`).
+  It is harness scaffolding, untracked, NOT part of NOUS — safe to delete
+  (`rm -rf .claude`) once the preview is finished with.
+- All marketing assets live OUTSIDE the repo in `~/nous-media/` (screenshots,
+  MP4/GIF field + perf clips) and `~/nous-media/.tooling/` (Playwright capture
+  scripts). Nothing there is tracked. A high-res 2× perf screenshot already
+  exists at `~/nous-media/showcase/perf-stress.png`.
 
-**B. ~16 "unmaintained" advisories — the gtk-rs GTK3 bindings family**
-- Transitive via Tauri v2's Linux webview (still on gtk3-rs). **No upstream
-  fix exists** — Tauri v2 has not moved off GTK3 on Linux.
-- Full ID list from the failing run: RUSTSEC-2024-0370, -0411, -0412, -0413,
-  -0414, -0415, -0416, -0417, -0418, -0419, -0420, RUSTSEC-2025-0075, -0080,
-  -0081, -0098, -0100, plus the two 2026 vulns above.
+**Confirmed this session (not hypothesis):**
+- Desktop WebKitGTK build tops out ~55 fps idle, and during a 50-expression
+  *active* slider sweep the rolling fps sits ~35–44 (dips at the center pinch).
+  The **Chromium preview hits a true 60 fps** (idle ceiling 59). In BOTH,
+  NOUS's own `draw avg` is ~0.7–1.7 ms/frame — the plot renderer is trivially
+  fast; the fps ceiling is compositor/React-bound, not plot-bound.
+- The earlier "60 fps with 50 expressions" reading came from a *frozen*-slider
+  clip (nothing redrawing). Under genuine simultaneous animation the desktop
+  number is ~40. This is a real accuracy nuance for any "60fps" marketing claim.
 
 ---
 
 ## 2. Decided vs. still open
 
-**Decided + committed this session:**
-- Add `cargo-deny` to CI; `deny.toml` uses a permissive-only license allowlist
-  (MPL/GPL/LGPL deliberately excluded so any future copyleft crate trips it).
+### Decided + committed this session (current hashes; all pushed, CI green)
+- `aa1e68b` — **dragDropEnabled: false** → fixes Windows in-app expression
+  drag-and-drop (wry/WebView2 was revoking Chromium's OLE drop target). **= the
+  v0.1.0 tag.**
+- `f0f88cb` — **core:window:allow-destroy** → X button now closes the app
+  (the M8.3 onCloseRequested listener needed the destroy permission).
+- `09983ec` — window-level Ctrl+wheel `preventDefault` → stops native WebView
+  page-zoom leaking through outside the canvas.
+- `f0cb036` — bundle identifier `com.nousproject.app` → `com.nousproject.nous`
+  (the `.app` suffix collided with macOS convention; done pre-tag so no user
+  data to migrate).
+- `b6e7be4` — pinned MPL-2.0 license exceptions to exact crate versions in
+  `deny.toml`; `cc144fb` — PLAN.md concrete Sept-16-2026 Node-20 runner
+  deadline; `35d6cac` — Linux clean-clone verification record.
+- README chain: `7abf76e` (per-OS Building-from-source), `97362b2` (trackpad
+  pinch known-limitation), `f7d87c7` (bundling enabled), `9000361` (title
+  nous→NOUS, maintainer web edit), `5beb417` (.gitignore env/OS-junk + hook
+  rename), `516c3d7` (lockfile 0.1.0 sync).
+- **Git history rewrite** — gmail→proton author email across all 68 commits,
+  force-pushed; verified 0 remaining occurrences locally and on GitHub.
+- **Repo settings (GitHub API, not commits):** made **public**; branch
+  protection on `main` (PR required, 0 approvals, 4 required status checks,
+  `enforce_admins: false` so direct push still works, no force-push/deletion);
+  **secret scanning + push protection ON**; Dependabot alerts + security
+  updates ON. Dependabot alert #1 (glib `VariantStrIter` unsoundness) dismissed
+  as `tolerable_risk` (GTK3-pinned via Tauri, no reachable fix).
+- **v0.1.0 tagged + GitHub release published** (maintainer did this ~05:16 UTC).
 
-**Open — not yet decided:**
-- **quick-xml: ignore vs. fix.** I was mid-check on whether a newer
-  `tauri-build` / `plist` release pulls a *patched* quick-xml, which would let
-  us fix rather than ignore. Not yet determined. If a patched version is not
-  reachable through `plist`'s semver range, the fallback is to `ignore` both
-  IDs in `deny.toml`, documented as build-only.
-- **Unmaintained gtk-rs advisories: must be ignored.** No fix exists; just
-  needs the `ignore` list written with a justification comment.
+### Open — not yet decided
+- **LinkedIn post "60 fps" claim.** Drafted and iterated in chat (not saved to
+  any file). The post as last drafted implies 60fps under 50 live expressions;
+  the desktop build is really ~40 under active load (see §1). Recommended
+  reword: lead with "**50 live expressions redrawn in ~1ms/frame**" (the
+  bulletproof metric) instead of an fps number, OR caption 60fps as the
+  in-browser/preview build. **Maintainer to decide before posting.**
+- **Repo link placement in the post** — body (one-click, but LinkedIn
+  suppresses reach on outbound body links) vs. first comment (better reach).
+  Unresolved; last draft had it in the body.
+- **The perf screenshot itself** — maintainer was about to capture it from the
+  live preview; may or may not be done.
 
-**Pending (proposed in the pre-clear audit, NOT yet written):**
-- CLAUDE.md hard-constraint #2 update — it still reads as if the *default*
-  palette must be CVD-safe, but we shipped Vivid (not CVD-safe) as default and
-  Accessible as opt-in. A doc edit, not started.
+### Proposed but NOT written anywhere (don't lose these)
+- **`Gcalc*` → `Nous*` identifier rename** — `GcalcDocument` (56 uses) and
+  `GcalcError` (49 uses) across 26 source files are renamed-project residue.
+  Proposed as an early-M11 mechanical chore; NOT in PLAN.md.
+- **CLAUDE.md title still reads "# gcalc — project spec"** (line 1). Flagged in
+  the earlier scrub, deliberately left (CLAUDE.md is maintainer-gated). One-line
+  fix when wanted.
+- **Rust-side "reset window zoom" command** (`set_zoom_level(1.0)`) as a
+  belt-and-suspenders recovery for the Linux trackpad-pinch limitation — safe
+  public API, proposed, not written. M11 nice-to-have at most.
+- **Delete the history-rewrite backup** at `~/Claude/nous-git-backup-2026-07-11/`
+  — it still contains the OLD gmail email in its objects (that was its job).
+  Delete once satisfied the rewrite is stable. Also optional: ask GitHub Support
+  to GC the old unreachable commit objects server-side (nobody had the SHAs, so
+  practical risk ~nil).
+- **Delete `.claude/launch.json`** (this session's untracked preview config)
+  once the preview is done.
 
 ---
 
 ## 3. Exact next action
 
-1. **Determine if the quick-xml vulns are fixable (vs. ignore):**
+**If finishing the marketing capture:**
+1. Screenshot the live preview at `http://localhost:1420/?perf=50` (server
+   `d65a76fb-bc35-4066-bb4f-39a3e1be203c`) — capture when curves fan out wide
+   (fps ~60, draw ~0.7ms), not at the center pinch.
+2. Stop the preview server (Claude Preview MCP `preview_stop`), then:
    ```sh
-   cd src-tauri
-   cargo tree -i quick-xml            # confirms plist 1.9.0 → quick-xml 0.39.4
-   cargo deny check advisories        # full local output lists each advisory's
-                                      # patched version (needs: cargo install cargo-deny)
-   cargo update -p quick-xml --dry-run # does plist's range allow a patched ver?
+   cd ~/Claude/nous && rm -rf .claude   # remove untracked preview config
+   git status --short                    # expect clean
    ```
-   If a newer `plist`/`tauri-build` release resolves it, bump and commit
-   `src-tauri/Cargo.lock`. If not reachable, go to step 2.
 
-2. **If not fixable, ignore with justification** in `src-tauri/deny.toml`:
-   ```toml
-   [advisories]
-   yanked = "deny"
-   ignore = [
-     # quick-xml — build-dependency only (tauri-build → plist), not in the
-     # shipped runtime binary; no reachable patched version through plist.
-     "RUSTSEC-2026-0194", "RUSTSEC-2026-0195",
-     # gtk-rs GTK3 bindings — unmaintained, transitive via Tauri v2's Linux
-     # webview; no upstream fix (Tauri v2 still on GTK3).
-     "RUSTSEC-2024-0370", "RUSTSEC-2024-0411", "RUSTSEC-2024-0412",
-     "RUSTSEC-2024-0413", "RUSTSEC-2024-0414", "RUSTSEC-2024-0415",
-     "RUSTSEC-2024-0416", "RUSTSEC-2024-0417", "RUSTSEC-2024-0418",
-     "RUSTSEC-2024-0419", "RUSTSEC-2024-0420", "RUSTSEC-2025-0075",
-     "RUSTSEC-2025-0080", "RUSTSEC-2025-0081", "RUSTSEC-2025-0098",
-     "RUSTSEC-2025-0100",
-   ]
-   ```
-   (Verify each ID against the current failing run before committing — the set
-   can drift as new advisories publish. Get it fresh with:
-   `gh run view <latest-run-id> --log-failed | grep -oE 'RUSTSEC-[0-9]{4}-[0-9]{4}' | sort -u`.)
-
-3. **Push and confirm the `cargo deny` job goes green** (npm-test matrix
-   already green) → restores the "CI green" acceptance for the tag.
-
-4. **Separately (pending audit item):** edit CLAUDE.md constraint #2 to
-   describe the two-palette design (Vivid default / Accessible opt-in).
+**The real remaining PROJECT work (maintainer-gated, from PLAN.md M10):**
+v0.1.0 was tagged with these still open — worth doing before heavy promotion:
+```sh
+# On a Windows machine — clean-clone build; this also re-tests the two
+# WebView2 fixes that CANNOT be verified on Linux:
+git clone https://github.com/ICXC-NIKA-DNR/NOUS.git && cd NOUS
+npm install && npm run tauri build -- --bundles nsis
+#   → then MANUALLY verify in the running app:
+#     (a) X button closes it            (commit f0f88cb)
+#     (b) drag an expression row into a folder works (commit aa1e68b)
+```
+Plus the other M10 maintainer-gated items: real-window visual confirms of
+icon/branding + palette, and optionally final icon art (one-command regen).
 
 ---
 
-## 4. Already done this session — do NOT redo
+## 4. Cross-check vs. PLAN.md / SCRATCH.md (flagged, NOT silently applied)
 
-All committed + pushed to `main` (auto-push hook = every commit is published):
+- **SCRATCH.md does not exist** in this repo — nothing to reconcile there.
+- **PLAN.md** — candidates the maintainer may want to merge in (I did not edit
+  PLAN.md this session except the already-committed `cc144fb` Node-20 note):
+  1. **v0.1.0 is now tagged/released** — PLAN.md's M10 "Tag v0.1.0 once the
+     above pass" acceptance can be checked off, BUT note the tag happened while
+     the Windows clean-clone build + real-window visual confirms were still
+     open. Status wording should reflect "tagged; Windows verification still
+     pending" rather than "M10 fully complete."
+  2. **Perf reality (rough edge worth recording):** desktop WebKitGTK runs
+     ~40 fps under 50-expression active animation (draw ~1ms; ceiling is
+     compositor-bound). PLAN.md/CLAUDE.md's "≥50 expressions, smooth" hard
+     target is met on *draw cost* but the fps figure deserves an honest note so
+     future marketing/docs don't over-claim 60fps for the desktop build.
+  3. **`Gcalc*`→`Nous*` rename** and the **CLAUDE.md "gcalc" title** — neither
+     is tracked in PLAN.md; log them as M11 cleanup if desired.
+  4. The **Windows drag-and-drop re-test** and **dragDropEnabled rationale**
+     ARE already in PLAN.md (added when `aa1e68b` landed) — no action needed.
 
-- **M10.1** — palette Vivid/Accessible toggle (global localStorage pref, live
-  swap), app-icon pipeline, `.header-controls` flex-wrap de-crowd.
-- **M10.2** — export filenames from tab name (`exportBaseName`), recovery
-  REPLACES the workspace, inlined-body preview fix (`displayAst`), custom SVG
-  select chevron.
-- **M10.3** — CONTRIBUTING/README finalize, `docs/dev/licensing-audit.md`
-  (npm tree clean, CAS Giac-free).
-- **M10.4** — CI workflow (`npm test`, Node 22, ubuntu/macos/windows) — GREEN.
-- **M10.5** — audit fixes: deserialization hardening (F1/F6/F8 —
-  `MAX_FOLDER_DEPTH=64`, colorIndex + viewport bounds, `onImport` catch-all,
-  hostile-input tests), dialog perm narrowed to open+save (F7), versions →
-  `0.1.0` + manifest metadata (F2/F3), README apt system-deps (F4),
-  `THIRD_PARTY_LICENSES.md` with full OFL-1.1 text, `src-tauri/deny.toml` +
-  cargo-deny CI job (F5).
-- **M10.6** — Linux packaging: `src-tauri/app-icon.svg` (NOUS mark) + generated
-  icon set, `bundle.active: true` targets `deb` + `appimage`. **Built and
-  launch-verified on this machine** (`NOUS_0.1.0_amd64.deb` + `.AppImage`; ldd
-  clean; window opens). Touch groundwork: pointerType-gated 2× pick/grab radii
-  + wider tap jitter, POI labels reveal near a pinned trace (tap works without
-  hover).
-- **PLAN.md** — status notes for all of the above; M11 (menu consolidation +
-  user-visible perf HUD) and iOS/Android-postponed both logged.
+---
 
-**NOT committed — will be lost on `/clear` unless acted on:**
-- The **hostile-input fuzzer** (`hostile.mjs`) and the **CVD palette analysis**
-  scripts (`cvd.mjs`, `optimize.mjs`) live ONLY in the session scratchpad
-  (`/tmp/…/scratchpad/`), not in the repo. The fuzzer is what found F1 —
-  consider committing it under `scripts/` or `docs/dev/` as a regression aid.
-- The **CLAUDE.md constraint #2 edit** — proposed in the audit, not written.
-- **This handoff file** — written; commit it if you want it in git history
-  (it survives `/clear` as a working-tree file either way).
-
-Correction to the request that prompted this file: nothing was written as a
-result of the pre-clear *audit* — the fuzzer script and the CLAUDE.md edit were
-only proposed there. The PLAN.md entries were committed earlier in the session,
-before the audit.
+## 5. Already done — do NOT redo
+- All commits in §2 are pushed; CI green on `aa1e68b`. Don't re-fix the
+  drag-drop, close-button, ctrl-wheel, or identifier issues — they're shipped.
+- The email history rewrite is complete and verified — do NOT re-run
+  filter-repo or force-push.
+- Repo is already public with branch protection + secret scanning configured —
+  don't re-apply those API calls.
