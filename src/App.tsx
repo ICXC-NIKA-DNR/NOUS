@@ -14,14 +14,22 @@ import { compile, type Env } from './core/compile.ts';
 import { GcalcError } from './core/errors.ts';
 import { expFit, linearFit, polyFit } from './plot/regress.ts';
 import {
+  applyCommand,
   emptyDocument,
   flattenExpressions,
   locate,
   makeExpression,
   makeFolder,
+  type Command,
   type GcalcDocument,
   type Item,
 } from './state/document.ts';
+import {
+  advancePhase,
+  formatSliderValue,
+  phaseFromValue,
+  sliderValueAt,
+} from './state/sliderAnim.ts';
 import { autosaveStore, installCleanExitMarker } from './platform/autosave.ts';
 import { errorLogPath, installErrorLog } from './platform/errorlog.ts';
 import { filePlatform } from './platform/files.ts';
@@ -176,7 +184,7 @@ export function App(): JSX.Element {
   // The workspace holds document tabs, each an independent editing session
   // (own document, own undo/redo, own viewport). All mutations flow through
   // `dispatch` into the ACTIVE tab's history; `setDocDirect` bypasses history
-  // for the automated perf animation only.
+  // for automated animations only (perf harness, ▶ slider playback).
   const {
     tabs,
     activeTabId,
@@ -432,6 +440,69 @@ export function App(): JSX.Element {
   docRef.current = doc;
   const analysesRef = useRef(analyses);
   analysesRef.current = analyses;
+
+  /* ---- slider animation (Slider-Anim-M1): ▶ sliders sweep min→max→min ---- */
+
+  // Phase per playing slider, transient (never persisted): pressing ▶ resumes
+  // from the row's current value via phaseFromValue; pausing forgets the phase.
+  const animPhases = useRef(new Map<number, number>());
+  // The loop restarts only when the SET of playing sliders changes; per-frame
+  // reads go through docRef/analysesRef so edits don't re-run the effect.
+  const playingKey = useMemo(
+    () =>
+      flat
+        .filter((f) => f.item.slider?.playing)
+        .map((f) => f.item.id)
+        .join(','),
+    [flat],
+  );
+  useEffect(() => {
+    if (playingKey === '') {
+      animPhases.current.clear();
+      return;
+    }
+    const playing = new Set(playingKey.split(',').map(Number));
+    for (const id of [...animPhases.current.keys()]) {
+      if (!playing.has(id)) animPhases.current.delete(id);
+    }
+    let raf = 0;
+    let last = 0;
+    const tick = (now: number): void => {
+      raf = requestAnimationFrame(tick);
+      const delta = last > 0 ? now - last : 0;
+      last = now;
+      if (delta <= 0) return;
+      const edits: Command[] = [];
+      for (const { item } of flattenExpressions(docRef.current)) {
+        const meta = item.slider;
+        if (!meta?.playing) continue;
+        const name = definitionName(item.source);
+        if (name === null) continue;
+        let phase = animPhases.current.get(item.id);
+        if (phase === undefined) {
+          const a = analysesRef.current.get(item.id);
+          const value = a?.kind === 'definition' ? a.value : meta.min;
+          phase = phaseFromValue(value, meta.min, meta.max);
+        }
+        phase = advancePhase(phase, delta, () => meta.speed ?? 1);
+        animPhases.current.set(item.id, phase);
+        const value = sliderValueAt(phase, meta.min, meta.max);
+        edits.push({
+          type: 'edit',
+          id: item.id,
+          source: `${name} = ${formatSliderValue(value, meta.step)}`,
+        });
+      }
+      if (edits.length > 0) {
+        // Straight to the document, never through undo history — per-frame
+        // automated writes would flood the stack (same rule as the perf
+        // harness animation).
+        setDocDirect((d) => edits.reduce(applyCommand, d));
+      }
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [playingKey, setDocDirect]);
 
   // Drag-and-drop: the id being dragged (ref, no re-render) and where the drop
   // would land (state, drives the indicator).

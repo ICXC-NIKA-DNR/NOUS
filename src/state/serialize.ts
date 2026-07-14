@@ -15,6 +15,7 @@ import type { AngleMode } from '../core/evaluator.ts';
 import type { SliderMeta } from '../ui/ExpressionRow.tsx';
 import type { Viewport } from '../plot/viewport.ts';
 import { mintId, type ExpressionItem, type FolderItem, type GcalcDocument, type Item } from './document.ts';
+import { SPEED_MAX, SPEED_MIN } from './sliderAnim.ts';
 
 export const NOUS_FORMAT = 'nous';
 export const NOUS_VERSION = 1;
@@ -168,11 +169,21 @@ function expectFiniteNumber(v: unknown, path: string): number {
 
 function parseSlider(v: unknown, path: string): SliderMeta {
   if (!isRecord(v)) throw new NousFormatError('expected a slider object', path);
-  return {
+  const out: SliderMeta = {
     min: expectFiniteNumber(v.min, `${path}.min`),
     max: expectFiniteNumber(v.max, `${path}.max`),
     step: expectFiniteNumber(v.step, `${path}.step`),
   };
+  // Slider-Anim-M1 fields — optional so pre-animation documents load as-is.
+  if (v.playing !== undefined) out.playing = expectBoolean(v.playing, `${path}.playing`);
+  if (v.speed !== undefined) {
+    const speed = expectFiniteNumber(v.speed, `${path}.speed`);
+    if (speed < SPEED_MIN || speed > SPEED_MAX) {
+      throw new NousFormatError(`speed out of range ${SPEED_MIN}–${SPEED_MAX}`, `${path}.speed`);
+    }
+    out.speed = speed;
+  }
+  return out;
 }
 
 /** Deserialization recurses per folder level; a hostile document with tens of

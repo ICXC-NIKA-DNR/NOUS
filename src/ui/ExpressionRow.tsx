@@ -13,12 +13,17 @@ import {
 } from '../core/autocomplete.ts';
 import type { Analysis } from './analyze.ts';
 import { applyEdit, formatValue } from './analyze.ts';
+import { clampSpeed, formatSliderValue, SPEED_MAX, SPEED_MIN } from '../state/sliderAnim.ts';
 import { toTex } from './tex.ts';
 
 export interface SliderMeta {
   min: number;
   max: number;
   step: number;
+  /** ▶ animation running (Slider-Anim-M1). Persists like the rest of the meta. */
+  playing?: boolean;
+  /** Flat speed multiplier (SPEED_MIN–SPEED_MAX); 1× = BASE_CYCLE_MS per sweep. */
+  speed?: number;
 }
 
 export interface ExpressionEntry {
@@ -61,12 +66,6 @@ export function curveColorVar(colorIndex: number): string {
   return `var(--curve-${(colorIndex % CURVE_COLORS) + 1})`;
 }
 
-/** Format a slider value with just enough decimals for its step. */
-function formatSliderValue(value: number, step: number): string {
-  const decimals = Math.max(0, Math.min(10, -Math.floor(Math.log10(step) + 1e-9)));
-  const s = value.toFixed(decimals);
-  return s === '-0' ? '0' : s;
-}
 
 interface RowProps {
   entry: ExpressionEntry;
@@ -127,7 +126,7 @@ function SliderControls({
   onChange: (source: string) => void;
   onMeta: (meta: SliderMeta) => void;
 }): JSX.Element {
-  const numField = (label: string, key: keyof SliderMeta): JSX.Element => (
+  const numField = (label: string, key: 'min' | 'max' | 'step'): JSX.Element => (
     <label className="slider-field">
       {label}
       <input
@@ -143,21 +142,47 @@ function SliderControls({
   );
   return (
     <div className="slider-block">
-      <input
-        type="range"
-        className="slider-range"
-        min={meta.min}
-        max={meta.max}
-        step={meta.step}
-        value={Number.isFinite(value) ? value : 0}
-        onChange={(e) =>
-          onChange(`${name} = ${formatSliderValue(Number(e.target.value), meta.step)}`)
-        }
-      />
+      <div className="slider-row">
+        <button
+          type="button"
+          className="slider-play"
+          title={meta.playing ? 'Pause' : 'Animate slider'}
+          aria-label={meta.playing ? `Pause ${name}` : `Animate ${name}`}
+          aria-pressed={meta.playing === true}
+          onClick={() => onMeta({ ...meta, playing: !meta.playing })}
+        >
+          {meta.playing ? '⏸' : '▶'}
+        </button>
+        <input
+          type="range"
+          className="slider-range"
+          min={meta.min}
+          max={meta.max}
+          step={meta.step}
+          value={Number.isFinite(value) ? value : 0}
+          onChange={(e) =>
+            onChange(`${name} = ${formatSliderValue(Number(e.target.value), meta.step)}`)
+          }
+        />
+      </div>
       <div className="slider-meta">
         {numField('min', 'min')}
         {numField('step', 'step')}
         {numField('max', 'max')}
+        <label className="slider-field" title="Animation speed multiplier (0.25×–4×)">
+          speed
+          <input
+            type="number"
+            value={meta.speed ?? 1}
+            min={SPEED_MIN}
+            max={SPEED_MAX}
+            step={0.25}
+            onChange={(e) => {
+              const v = Number(e.target.value);
+              if (Number.isFinite(v)) onMeta({ ...meta, speed: clampSpeed(v) });
+            }}
+          />
+        </label>
       </div>
     </div>
   );

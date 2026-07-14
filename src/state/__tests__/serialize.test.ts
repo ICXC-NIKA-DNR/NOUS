@@ -25,7 +25,8 @@ import {
 /** A document exercising every serialized feature: nested folders, sliders,
  * hidden items, collapsed folders, restricted domains, unicode sources. */
 function complexDocument(): GcalcDocument {
-  const slider = makeExpression('a = 2', { min: -5, max: 5, step: 0.1 });
+  // Animation fields (Slider-Anim-M1) ride through every round-trip test.
+  const slider = makeExpression('a = 2', { min: -5, max: 5, step: 0.1, playing: true, speed: 2 });
   const hidden = makeExpression('y = a x^2');
   hidden.visible = false;
   const inner = makeFolder('inner', [makeExpression('y = sin x {x > 0}'), hidden]);
@@ -195,6 +196,27 @@ test('rejects malformed sliders and viewports', () => {
   );
   assertRejects({ ...good(), viewport: { ...viewport, xMax: -10 } }, 'viewport');
   assertRejects({ ...good(), viewport: { ...viewport, yMin: Infinity } });
+});
+
+test('slider animation fields are optional and validated (Slider-Anim-M1)', () => {
+  // Pre-animation sliders (no playing/speed) still load.
+  const bare = {
+    ...good(),
+    items: [{ kind: 'expression', source: 'a=1', colorIndex: 0, visible: true, slider: { min: 0, max: 5, step: 1 } }],
+  };
+  const loaded = parseNousJson(JSON.stringify(bare));
+  const item = loaded.doc.items[0];
+  assert.ok(item.kind === 'expression');
+  assert.equal(item.slider?.playing, undefined);
+  assert.equal(item.slider?.speed, undefined);
+
+  const withAnim = (slider: Record<string, unknown>): Record<string, unknown> => ({
+    ...good(),
+    items: [{ kind: 'expression', source: 'a=1', colorIndex: 0, visible: true, slider }],
+  });
+  assertRejects(withAnim({ min: 0, max: 5, step: 1, playing: 'yes' }), 'items[0].slider.playing');
+  assertRejects(withAnim({ min: 0, max: 5, step: 1, speed: 8 }), 'items[0].slider.speed');
+  assertRejects(withAnim({ min: 0, max: 5, step: 1, speed: 0 }), 'items[0].slider.speed');
 });
 
 /* ---- hostile input: depth caps and numeric bounds (M10 security pass) ---- */
