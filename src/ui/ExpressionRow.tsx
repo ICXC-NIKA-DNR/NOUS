@@ -13,7 +13,20 @@ import {
 } from '../core/autocomplete.ts';
 import type { Analysis } from './analyze.ts';
 import { applyEdit, formatValue } from './analyze.ts';
-import { clampSpeed, formatSliderValue, SPEED_MAX, SPEED_MIN } from '../state/sliderAnim.ts';
+import {
+  addCurveNode,
+  clampSpeed,
+  defaultCurveNodes,
+  formatSliderValue,
+  MAX_CURVE_NODES,
+  moveCurveNode,
+  prepareCurve,
+  removeCurveNode,
+  SPEED_MAX,
+  SPEED_MIN,
+  type CurveNode,
+  type LoopSeam,
+} from '../state/sliderAnim.ts';
 import { toTex } from './tex.ts';
 
 export interface SliderMeta {
@@ -24,6 +37,13 @@ export interface SliderMeta {
   playing?: boolean;
   /** Flat speed multiplier (SPEED_MIN–SPEED_MAX); 1× = BASE_CYCLE_MS per sweep. */
   speed?: number;
+  /** Which speed source drives playback (Slider-Anim-M2). Both configurations
+   * are kept — toggling modes never discards the other one. Default 'flat'. */
+  speedMode?: 'flat' | 'curve';
+  /** Speed-ramp control points, sorted by phase, [0].phase always 0. */
+  curveNodes?: CurveNode[];
+  /** Cycle-boundary behavior for the curve; default 'smooth' (periodic). */
+  loopSeam?: LoopSeam;
 }
 
 export interface ExpressionEntry {
@@ -113,6 +133,163 @@ function MathPreview({ analysis, precision }: { analysis: Analysis; precision: n
   return <div className="math-preview" dangerouslySetInnerHTML={{ __html: html }} />;
 }
 
+/* ---- speed-curve editor (Slider-Anim-M2) ---- */
+
+// Fixed-pixel SVG (no CSS scaling) so pointer math is a direct subtraction.
+const CURVE_W = 224;
+const CURVE_H = 96;
+const CURVE_PAD = 10;
+
+/** phase 0–1 → x px. */
+const curveX = (phase: number): number => CURVE_PAD + phase * (CURVE_W - 2 * CURVE_PAD);
+/** multiplier → y px, log₂-scaled: 4× top, 1× center, ¼× bottom. */
+const curveY = (mult: number): number =>
+  CURVE_PAD + ((2 - Math.log2(mult)) / 4) * (CURVE_H - 2 * CURVE_PAD);
+
+function SpeedCurveEditor({
+  meta,
+  onMeta,
+}: {
+  meta: SliderMeta;
+  onMeta: (meta: SliderMeta) => void;
+}): JSX.Element {
+  // Display nodes fall back to the flat speed's single anchor; any edit
+  // materializes them into the meta. The flat `speed` is never touched here,
+  // so toggling modes preserves both configurations.
+  const nodes = meta.curveNodes ?? defaultCurveNodes(meta.speed);
+  const seam: LoopSeam = meta.loopSeam ?? 'smooth';
+  const mode = meta.speedMode ?? 'flat';
+  const svgRef = useRef<SVGSVGElement>(null);
+  const dragIndex = useRef<number | null>(null);
+  const setNodes = (next: CurveNode[]): void => onMeta({ ...meta, curveNodes: next });
+
+  const path = useMemo(() => {
+    const at = prepareCurve(nodes, seam);
+    const pts: string[] = [];
+    for (let i = 0; i <= 64; i++) {
+      const p = i / 64;
+      pts.push(`${i === 0 ? 'M' : 'L'}${curveX(p).toFixed(1)},${curveY(at(p)).toFixed(1)}`);
+    }
+    return pts.join(' ');
+  }, [nodes, seam]);
+
+  const dragTo = (i: number, e: React.PointerEvent): void => {
+    // The SVG is CSS-sized to the sidebar; map client px back into viewBox px.
+    const rect = svgRef.current!.getBoundingClientRect();
+    const vx = ((e.clientX - rect.left) * CURVE_W) / rect.width;
+    const vy = ((e.clientY - rect.top) * CURVE_H) / rect.height;
+    const phase = (vx - CURVE_PAD) / (CURVE_W - 2 * CURVE_PAD);
+    const ly = 2 - (4 * (vy - CURVE_PAD)) / (CURVE_H - 2 * CURVE_PAD);
+    setNodes(moveCurveNode(nodes, i, phase, 2 ** ly)); // clamps x between neighbors, y to range
+  };
+
+  return (
+    <div className="speed-curve">
+      <div className="speed-curve-controls">
+        <div className="angle-toggle" role="group" aria-label="Speed mode">
+          <button
+            type="button"
+            aria-pressed={mode === 'flat'}
+            title="Constant speed (the speed field)"
+            onClick={() => onMeta({ ...meta, speedMode: 'flat' })}
+          >
+            flat
+          </button>
+          <button
+            type="button"
+            aria-pressed={mode === 'curve'}
+            title="Speed varies over the cycle (this curve)"
+            onClick={() => onMeta({ ...meta, speedMode: 'curve', curveNodes: nodes })}
+          >
+            curve
+          </button>
+        </div>
+        <div className="angle-toggle" role="group" aria-label="Loop seam">
+          <button
+            type="button"
+            aria-pressed={seam === 'smooth'}
+            title="Speed flows continuously from cycle end into the next"
+            onClick={() => onMeta({ ...meta, loopSeam: 'smooth' })}
+          >
+            smooth
+          </button>
+          <button
+            type="button"
+            aria-pressed={seam === 'hard'}
+            title="Speed holds after the last node, then jumps at the cycle restart"
+            onClick={() => onMeta({ ...meta, loopSeam: 'hard' })}
+          >
+            hard
+          </button>
+        </div>
+        <button
+          type="button"
+          className="curve-node-btn"
+          aria-label="Add curve node"
+          disabled={nodes.length >= MAX_CURVE_NODES}
+          onClick={() => setNodes(addCurveNode(nodes, seam))}
+        >
+          +
+        </button>
+        <button
+          type="button"
+          className="curve-node-btn"
+          aria-label="Remove curve node"
+          disabled={nodes.length <= 1}
+          onClick={() => setNodes(removeCurveNode(nodes))}
+        >
+          −
+        </button>
+      </div>
+      <svg
+        ref={svgRef}
+        className="speed-curve-graph"
+        viewBox={`0 0 ${CURVE_W} ${CURVE_H}`}
+        role="img"
+        aria-label="Speed curve: phase through one cycle vs speed multiplier"
+      >
+        {[4, 1, 0.25].map((m) => (
+          <g key={m}>
+            <line
+              className={`speed-curve-grid${m === 1 ? ' one' : ''}`}
+              x1={CURVE_PAD}
+              x2={CURVE_W - CURVE_PAD}
+              y1={curveY(m)}
+              y2={curveY(m)}
+            />
+            <text className="speed-curve-label" x={1} y={curveY(m) + 2.5}>
+              {m === 0.25 ? '¼' : m}×
+            </text>
+          </g>
+        ))}
+        <path className="speed-curve-path" d={path} />
+        {nodes.map((node, i) => (
+          <circle
+            key={i}
+            className={`speed-curve-node${i === 0 ? ' anchor' : ''}`}
+            cx={curveX(node.phase)}
+            cy={curveY(node.multiplier)}
+            r={4.5}
+            onPointerDown={(e) => {
+              e.currentTarget.setPointerCapture(e.pointerId);
+              dragIndex.current = i;
+            }}
+            onPointerMove={(e) => {
+              if (dragIndex.current === i) dragTo(i, e);
+            }}
+            onPointerUp={() => {
+              dragIndex.current = null;
+            }}
+            onPointerCancel={() => {
+              dragIndex.current = null;
+            }}
+          />
+        ))}
+      </svg>
+    </div>
+  );
+}
+
 function SliderControls({
   name,
   value,
@@ -126,6 +303,7 @@ function SliderControls({
   onChange: (source: string) => void;
   onMeta: (meta: SliderMeta) => void;
 }): JSX.Element {
+  const [advanced, setAdvanced] = useState(false);
   const numField = (label: string, key: 'min' | 'max' | 'step'): JSX.Element => (
     <label className="slider-field">
       {label}
@@ -183,7 +361,17 @@ function SliderControls({
             }}
           />
         </label>
+        <button
+          type="button"
+          className="curve-toggle"
+          title="Speed curve (advanced): vary the speed over the cycle"
+          aria-expanded={advanced}
+          onClick={() => setAdvanced((a) => !a)}
+        >
+          curve {advanced ? '▾' : '▸'}
+        </button>
       </div>
+      {advanced && <SpeedCurveEditor meta={meta} onMeta={onMeta} />}
     </div>
   );
 }

@@ -15,7 +15,7 @@ import type { AngleMode } from '../core/evaluator.ts';
 import type { SliderMeta } from '../ui/ExpressionRow.tsx';
 import type { Viewport } from '../plot/viewport.ts';
 import { mintId, type ExpressionItem, type FolderItem, type GcalcDocument, type Item } from './document.ts';
-import { SPEED_MAX, SPEED_MIN } from './sliderAnim.ts';
+import { MAX_CURVE_NODES, SPEED_MAX, SPEED_MIN } from './sliderAnim.ts';
 
 export const NOUS_FORMAT = 'nous';
 export const NOUS_VERSION = 1;
@@ -103,7 +103,21 @@ function serializeItem(item: Item): SerializedItem {
       colorIndex: item.colorIndex,
       visible: item.visible,
     };
-    if (item.slider) out.slider = { ...item.slider };
+    if (item.slider) {
+      // Field-by-field in canonical order: the in-memory meta's key order
+      // depends on UI spread history, and save→load→save must be
+      // byte-identical (the stability test).
+      const s = item.slider;
+      const slider: SliderMeta = { min: s.min, max: s.max, step: s.step };
+      if (s.playing !== undefined) slider.playing = s.playing;
+      if (s.speed !== undefined) slider.speed = s.speed;
+      if (s.speedMode !== undefined) slider.speedMode = s.speedMode;
+      if (s.curveNodes !== undefined) {
+        slider.curveNodes = s.curveNodes.map((n) => ({ phase: n.phase, multiplier: n.multiplier }));
+      }
+      if (s.loopSeam !== undefined) slider.loopSeam = s.loopSeam;
+      out.slider = slider;
+    }
     return out;
   }
   return {
@@ -182,6 +196,48 @@ function parseSlider(v: unknown, path: string): SliderMeta {
       throw new NousFormatError(`speed out of range ${SPEED_MIN}–${SPEED_MAX}`, `${path}.speed`);
     }
     out.speed = speed;
+  }
+  // Slider-Anim-M2 speed-curve fields.
+  if (v.speedMode !== undefined) {
+    if (v.speedMode !== 'flat' && v.speedMode !== 'curve') {
+      throw new NousFormatError('expected "flat" or "curve"', `${path}.speedMode`);
+    }
+    out.speedMode = v.speedMode;
+  }
+  if (v.curveNodes !== undefined) {
+    if (!Array.isArray(v.curveNodes) || v.curveNodes.length < 1 || v.curveNodes.length > MAX_CURVE_NODES) {
+      throw new NousFormatError(`expected 1–${MAX_CURVE_NODES} curve nodes`, `${path}.curveNodes`);
+    }
+    out.curveNodes = v.curveNodes.map((node, i) => {
+      const nodePath = `${path}.curveNodes[${i}]`;
+      if (!isRecord(node)) throw new NousFormatError('expected a curve node object', nodePath);
+      const phase = expectFiniteNumber(node.phase, `${nodePath}.phase`);
+      const multiplier = expectFiniteNumber(node.multiplier, `${nodePath}.multiplier`);
+      if (i === 0 ? phase !== 0 : phase <= 0 || phase > 1) {
+        throw new NousFormatError(
+          i === 0 ? 'the first curve node must sit at phase 0' : 'phase out of range 0–1',
+          `${nodePath}.phase`,
+        );
+      }
+      if (multiplier < SPEED_MIN || multiplier > SPEED_MAX) {
+        throw new NousFormatError(
+          `multiplier out of range ${SPEED_MIN}–${SPEED_MAX}`,
+          `${nodePath}.multiplier`,
+        );
+      }
+      return { phase, multiplier };
+    });
+    for (let i = 1; i < out.curveNodes.length; i++) {
+      if (out.curveNodes[i].phase <= out.curveNodes[i - 1].phase) {
+        throw new NousFormatError('curve nodes must be sorted by ascending phase', `${path}.curveNodes[${i}].phase`);
+      }
+    }
+  }
+  if (v.loopSeam !== undefined) {
+    if (v.loopSeam !== 'smooth' && v.loopSeam !== 'hard') {
+      throw new NousFormatError('expected "smooth" or "hard"', `${path}.loopSeam`);
+    }
+    out.loopSeam = v.loopSeam;
   }
   return out;
 }

@@ -27,6 +27,7 @@ import {
 import {
   advancePhase,
   formatSliderValue,
+  metaMultiplier,
   phaseFromValue,
   sliderValueAt,
 } from './state/sliderAnim.ts';
@@ -484,7 +485,7 @@ export function App(): JSX.Element {
           const value = a?.kind === 'definition' ? a.value : meta.min;
           phase = phaseFromValue(value, meta.min, meta.max);
         }
-        phase = advancePhase(phase, delta, () => meta.speed ?? 1);
+        phase = advancePhase(phase, delta, metaMultiplier(meta));
         animPhases.current.set(item.id, phase);
         const value = sliderValueAt(phase, meta.min, meta.max);
         edits.push({

@@ -901,7 +901,9 @@ body {
 
 .slider-meta {
   display: flex;
-  gap: 8px;
+  flex-wrap: wrap; /* min/step/max/speed/curve must not overflow a 240px sidebar */
+  gap: 6px 8px;
+  align-items: center;
   margin-top: 4px;
 }
 
@@ -921,6 +923,94 @@ body {
   border-radius: 4px;
   font: inherit;
   padding: 2px 5px;
+}
+
+/* ---------------- speed-curve editor (Slider-Anim-M2) ---------------- */
+
+.curve-toggle,
+.curve-node-btn {
+  white-space: nowrap;
+  background: transparent;
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font: inherit;
+  font-size: 11px;
+  line-height: 1;
+  padding: 3px 6px;
+  cursor: pointer;
+}
+
+.curve-toggle:hover,
+.curve-node-btn:hover:not(:disabled) {
+  color: var(--text);
+  border-color: var(--text-dim);
+}
+
+.curve-node-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.speed-curve {
+  margin-top: 6px;
+}
+
+.speed-curve-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+  font-size: 11px;
+}
+
+.speed-curve-controls .angle-toggle button {
+  padding: 3px 7px;
+  font-size: 11px;
+}
+
+.speed-curve-graph {
+  display: block;
+  width: 100%;
+  max-width: 280px;
+  height: auto;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  touch-action: none;
+}
+
+.speed-curve-grid {
+  stroke: var(--border);
+  stroke-width: 1;
+}
+
+.speed-curve-grid.one {
+  stroke: var(--text-dim);
+  stroke-dasharray: 3 3;
+}
+
+.speed-curve-label {
+  fill: var(--text-dim);
+  font-size: 8px;
+}
+
+.speed-curve-path {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1.5;
+}
+
+.speed-curve-node {
+  fill: var(--accent);
+  stroke: var(--bg);
+  stroke-width: 1.5;
+  cursor: grab;
+}
+
+.speed-curve-node.anchor {
+  cursor: ns-resize;
 }
 
 /* ---------------- perf HUD (dev, ?perf=N) ---------------- */

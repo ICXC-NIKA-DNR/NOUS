@@ -25,8 +25,21 @@ import {
 /** A document exercising every serialized feature: nested folders, sliders,
  * hidden items, collapsed folders, restricted domains, unicode sources. */
 function complexDocument(): GcalcDocument {
-  // Animation fields (Slider-Anim-M1) ride through every round-trip test.
-  const slider = makeExpression('a = 2', { min: -5, max: 5, step: 0.1, playing: true, speed: 2 });
+  // Animation fields (Slider-Anim-M1/M2) ride through every round-trip test.
+  const slider = makeExpression('a = 2', {
+    min: -5,
+    max: 5,
+    step: 0.1,
+    playing: true,
+    speed: 2,
+    speedMode: 'curve',
+    curveNodes: [
+      { phase: 0, multiplier: 0.5 },
+      { phase: 0.4, multiplier: 4 },
+      { phase: 0.9, multiplier: 1 },
+    ],
+    loopSeam: 'hard',
+  });
   const hidden = makeExpression('y = a x^2');
   hidden.visible = false;
   const inner = makeFolder('inner', [makeExpression('y = sin x {x > 0}'), hidden]);
@@ -217,6 +230,22 @@ test('slider animation fields are optional and validated (Slider-Anim-M1)', () =
   assertRejects(withAnim({ min: 0, max: 5, step: 1, playing: 'yes' }), 'items[0].slider.playing');
   assertRejects(withAnim({ min: 0, max: 5, step: 1, speed: 8 }), 'items[0].slider.speed');
   assertRejects(withAnim({ min: 0, max: 5, step: 1, speed: 0 }), 'items[0].slider.speed');
+
+  // Slider-Anim-M2 curve fields.
+  const base = { min: 0, max: 5, step: 1 };
+  const node = (phase: number, multiplier: number): Record<string, unknown> => ({ phase, multiplier });
+  assertRejects(withAnim({ ...base, speedMode: 'ramp' }), 'items[0].slider.speedMode');
+  assertRejects(withAnim({ ...base, loopSeam: 'soft' }), 'items[0].slider.loopSeam');
+  assertRejects(withAnim({ ...base, curveNodes: [] }), 'items[0].slider.curveNodes');
+  assertRejects(
+    withAnim({ ...base, curveNodes: [node(0, 1), node(0.1, 1), node(0.2, 1), node(0.3, 1), node(0.4, 1), node(0.5, 1)] }),
+    'items[0].slider.curveNodes',
+  );
+  // The anchor must sit at phase 0; later nodes must be sorted and in range.
+  assertRejects(withAnim({ ...base, curveNodes: [node(0.2, 1)] }), 'curveNodes[0].phase');
+  assertRejects(withAnim({ ...base, curveNodes: [node(0, 1), node(0.6, 2), node(0.3, 2)] }), 'curveNodes[2].phase');
+  assertRejects(withAnim({ ...base, curveNodes: [node(0, 1), node(1.5, 2)] }), 'curveNodes[1].phase');
+  assertRejects(withAnim({ ...base, curveNodes: [node(0, 1), node(0.5, 40)] }), 'curveNodes[1].multiplier');
 });
 
 /* ---- hostile input: depth caps and numeric bounds (M10 security pass) ---- */

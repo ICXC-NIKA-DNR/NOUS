@@ -46,6 +46,7 @@ export const canRedo = (h: History): boolean => h.future.length > 0;
 function coalesceKey(cmd: Command): string | null {
   if (cmd.type === 'edit') return `edit:${cmd.id}`;
   if (cmd.type === 'renameFolder') return `rename:${cmd.id}`; // typing a name = one step
+  if (cmd.type === 'setSlider') return `slider:${cmd.id}`; // curve-node drag = one step
   return null;
 }
 

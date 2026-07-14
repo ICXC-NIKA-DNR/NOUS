@@ -169,3 +169,20 @@ test('history depth stays bounded', () => {
   }
   assert.ok(h.past.length <= 200, `past length ${h.past.length} should be capped`);
 });
+
+test('setSlider coalesces per row — a curve-node drag is one undo step (Slider-Anim-M2)', () => {
+  const doc = start();
+  const id = flattenExpressions(doc)[0].item.id;
+  let h = initHistory(doc);
+  // Simulate dragging a speed-curve node: many setSlider commands, one gesture.
+  for (const mult of [1, 1.5, 2, 2.5, 3]) {
+    h = dispatch(h, {
+      type: 'setSlider',
+      id,
+      slider: { min: 0, max: 10, step: 1, curveNodes: [{ phase: 0, multiplier: mult }] },
+    });
+  }
+  assert.equal(h.past.length, 1);
+  h = undo(h);
+  assert.equal(flattenExpressions(h.present)[0].item.slider, undefined);
+});
