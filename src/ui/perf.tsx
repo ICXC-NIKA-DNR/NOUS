@@ -108,8 +108,12 @@ interface PerfAnimation {
   toggle: () => boolean;
 }
 
-export function usePerfAnimation(setDoc: SetDocument): PerfAnimation {
-  const active = perfCount() > 0;
+export function usePerfAnimation(setDoc: SetDocument, manualHud = false): PerfAnimation {
+  // The stats loop runs for the harness (?perf=N) or the in-app HUD toggle;
+  // the synthetic slider animation is harness-only — in a normal document it
+  // would grab hold of the user's own a/b sliders.
+  const harness = perfCount() > 0;
+  const active = harness || manualHud;
   const hudRef = useRef<HTMLDivElement>(null);
   // Phase 1: measure the webview's idle rAF cadence (the fps ceiling this
   // compositor allows). Phase 2: auto-start the animation and compare.
@@ -144,7 +148,7 @@ export function usePerfAnimation(setDoc: SetDocument): PerfAnimation {
           console.log(`[perf] baseline idle fps=${bl.fps.toFixed(1)} (compositor ceiling)`);
           fr.times.length = 0;
           fr.ms.length = 0;
-          running.current = true; // phase 2
+          if (harness) running.current = true; // phase 2 (harness-only animation)
         }
       }
 
@@ -204,8 +208,13 @@ export function usePerfAnimation(setDoc: SetDocument): PerfAnimation {
       fr.last = now;
     };
     raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
-  }, [active, setDoc]);
+    return () => {
+      cancelAnimationFrame(raf);
+      // Drop the last timestamp so re-enabling the HUD doesn't record the
+      // toggled-off gap as a giant "worst gap" outlier.
+      frames.current.last = 0;
+    };
+  }, [active, harness, setDoc]);
 
   const toggle = useCallback((): boolean => {
     running.current = !running.current;
@@ -218,22 +227,28 @@ export function usePerfAnimation(setDoc: SetDocument): PerfAnimation {
 export function PerfHud({
   hudRef,
   toggle,
+  manual = false,
 }: {
   hudRef: React.RefObject<HTMLDivElement>;
   toggle: () => boolean;
+  /** In-app "show performance" toggle: shows the HUD without ?perf=N. */
+  manual?: boolean;
 }): JSX.Element | null {
-  if (perfCount() === 0) return null;
+  const harness = perfCount() > 0;
+  if (!harness && !manual) return null;
   return (
     <div className="perf-hud" ref={hudRef}>
       <pre className="perf-line">waiting for frames…</pre>
-      <button
-        type="button"
-        onClick={(e) => {
-          e.currentTarget.textContent = toggle() ? '⏸ stop' : '▶ animate sliders';
-        }}
-      >
-        ⏸ stop
-      </button>
+      {harness && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.currentTarget.textContent = toggle() ? '⏸ stop' : '▶ animate sliders';
+          }}
+        >
+          ⏸ stop
+        </button>
+      )}
     </div>
   );
 }

@@ -104,6 +104,19 @@ function applyPaletteAttr(mode: PaletteMode): void {
 const INITIAL_PALETTE = readStoredPalette();
 applyPaletteAttr(INITIAL_PALETTE);
 
+// Perf-HUD visibility. Viewer-level preference like the palette: lives in
+// localStorage, not in the document. ?perf=N still forces the HUD on
+// regardless of this toggle (the harness/gallery path).
+const PERF_HUD_KEY = 'nous.showPerfHud';
+function readStoredPerfHud(): boolean {
+  try {
+    return localStorage.getItem(PERF_HUD_KEY) === 'on';
+  } catch {
+    return false;
+  }
+}
+const INITIAL_PERF_HUD = readStoredPerfHud();
+
 const EMPTY_ANALYSIS: Analysis = { kind: 'empty' };
 
 const NO_ACTIONS: readonly CasAction[] = [];
@@ -224,6 +237,17 @@ export function App(): JSX.Element {
     }
     setPaletteMode(mode);
   }, []);
+  const [showPerfHud, setShowPerfHud] = useState<boolean>(INITIAL_PERF_HUD);
+  const togglePerfHud = useCallback((): void => {
+    setShowPerfHud((on) => !on);
+  }, []);
+  useEffect(() => {
+    try {
+      localStorage.setItem(PERF_HUD_KEY, showPerfHud ? 'on' : 'off');
+    } catch {
+      // ignore storage failures (private mode / quota); the toggle still applies live
+    }
+  }, [showPerfHud]);
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
       if (e.key === 'Escape') {
@@ -750,7 +774,7 @@ export function App(): JSX.Element {
     };
   }, []);
 
-  const { hudRef, onFrame, toggle } = usePerfAnimation(setDocDirect);
+  const { hudRef, onFrame, toggle } = usePerfAnimation(setDocDirect, showPerfHud);
 
   const dragHandle = (id: number): JSX.Element => (
     <span
@@ -939,6 +963,16 @@ export function App(): JSX.Element {
             >
               ⌨
             </button>
+            <button
+              type="button"
+              className="shortcuts-button perf-toggle"
+              title="Show performance stats"
+              aria-label="Show performance stats"
+              aria-pressed={showPerfHud}
+              onClick={togglePerfHud}
+            >
+              fps
+            </button>
             <div className="angle-toggle" role="group" aria-label="Angle mode">
               <button
                 type="button"
@@ -986,7 +1020,7 @@ export function App(): JSX.Element {
           apiRef={graphApi}
           getExportName={activeTabName}
         />
-        <PerfHud hudRef={hudRef} toggle={toggle} />
+        <PerfHud hudRef={hudRef} toggle={toggle} manual={showPerfHud} />
       </main>
       {shortcutsOpen && <ShortcutsPanel onClose={() => setShortcutsOpen(false)} />}
     </div>

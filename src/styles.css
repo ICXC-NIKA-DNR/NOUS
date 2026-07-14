@@ -241,6 +241,15 @@ body {
   border-color: var(--text-dim);
 }
 
+.perf-toggle {
+  font-size: 12px;
+}
+
+.perf-toggle[aria-pressed='true'] {
+  background: var(--bg-input);
+  color: var(--text);
+}
+
 .shortcuts-backdrop {
   position: fixed;
   inset: 0;
