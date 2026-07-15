@@ -15,17 +15,15 @@ import type { Analysis } from './analyze.ts';
 import { applyEdit, formatValue } from './analyze.ts';
 import {
   addCurveNode,
-  clampSpeed,
-  defaultCurveNodes,
   formatSliderValue,
   MAX_CURVE_NODES,
   moveCurveNode,
+  normalizedCurveNodes,
   prepareCurve,
   removeCurveNode,
-  SPEED_MAX,
-  SPEED_MIN,
   type CurveNode,
   type LoopSeam,
+  type SpeedMode,
 } from '../state/sliderAnim.ts';
 import { toTex } from './tex.ts';
 
@@ -35,14 +33,14 @@ export interface SliderMeta {
   step: number;
   /** ▶ animation running (Slider-Anim-M1). Persists like the rest of the meta. */
   playing?: boolean;
-  /** Flat speed multiplier (SPEED_MIN–SPEED_MAX); 1× = BASE_CYCLE_MS per sweep. */
-  speed?: number;
-  /** Which speed source drives playback (Slider-Anim-M2). Both configurations
-   * are kept — toggling modes never discards the other one. Default 'flat'. */
-  speedMode?: 'flat' | 'curve';
-  /** Speed-ramp control points, sorted by phase, [0].phase always 0. */
+  /** Interpolation between the speed nodes (Slider-Anim-M3): 'flat' = linear
+   * segments, 'curve' = PCHIP. Default 'flat'. (The M1 scalar `speed` field
+   * is gone — legacy files' speed seeds the two anchors at load.) */
+  speedMode?: SpeedMode;
+  /** Speed-ramp control points, sorted by phase; anchors at phase 0 and 1. */
   curveNodes?: CurveNode[];
-  /** Cycle-boundary behavior for the curve; default 'smooth' (periodic). */
+  /** Cycle-boundary behavior: 'smooth' locks the anchors' y together
+   * (continuous speed across cycles); 'hard' lets them differ (speed pop). */
   loopSeam?: LoopSeam;
 }
 
@@ -153,25 +151,26 @@ function SpeedCurveEditor({
   meta: SliderMeta;
   onMeta: (meta: SliderMeta) => void;
 }): JSX.Element {
-  // Display nodes fall back to the flat speed's single anchor; any edit
-  // materializes them into the meta. The flat `speed` is never touched here,
-  // so toggling modes preserves both configurations.
-  const nodes = meta.curveNodes ?? defaultCurveNodes(meta.speed);
+  // One editor for both interpolation modes (Slider-Anim-M3): the same node
+  // graph drives playback whether segments are linear ('flat') or PCHIP
+  // ('curve'). Display falls back to the normalized default (two anchors at
+  // 1×); any edit materializes the nodes into the meta.
+  const nodes = normalizedCurveNodes(meta);
   const seam: LoopSeam = meta.loopSeam ?? 'smooth';
-  const mode = meta.speedMode ?? 'flat';
+  const mode: SpeedMode = meta.speedMode ?? 'flat';
   const svgRef = useRef<SVGSVGElement>(null);
   const dragIndex = useRef<number | null>(null);
   const setNodes = (next: CurveNode[]): void => onMeta({ ...meta, curveNodes: next });
 
   const path = useMemo(() => {
-    const at = prepareCurve(nodes, seam);
+    const at = prepareCurve(nodes, seam, mode);
     const pts: string[] = [];
     for (let i = 0; i <= 64; i++) {
       const p = i / 64;
       pts.push(`${i === 0 ? 'M' : 'L'}${curveX(p).toFixed(1)},${curveY(at(p)).toFixed(1)}`);
     }
     return pts.join(' ');
-  }, [nodes, seam]);
+  }, [nodes, seam, mode]);
 
   const dragTo = (i: number, e: React.PointerEvent): void => {
     // The SVG is CSS-sized to the sidebar; map client px back into viewBox px.
@@ -180,25 +179,27 @@ function SpeedCurveEditor({
     const vy = ((e.clientY - rect.top) * CURVE_H) / rect.height;
     const phase = (vx - CURVE_PAD) / (CURVE_W - 2 * CURVE_PAD);
     const ly = 2 - (4 * (vy - CURVE_PAD)) / (CURVE_H - 2 * CURVE_PAD);
-    setNodes(moveCurveNode(nodes, i, phase, 2 ** ly)); // clamps x between neighbors, y to range
+    // Clamps: anchors pin to x 0/1 (smooth also y-locks them together),
+    // middles stay between their neighbors, y stays in the speed range.
+    setNodes(moveCurveNode(nodes, i, phase, 2 ** ly, seam));
   };
 
   return (
     <div className="speed-curve">
       <div className="speed-curve-controls">
-        <div className="angle-toggle" role="group" aria-label="Speed mode">
+        <div className="angle-toggle" role="group" aria-label="Interpolation">
           <button
             type="button"
             aria-pressed={mode === 'flat'}
-            title="Constant speed (the speed field)"
-            onClick={() => onMeta({ ...meta, speedMode: 'flat' })}
+            title="Straight segments between nodes"
+            onClick={() => onMeta({ ...meta, speedMode: 'flat', curveNodes: nodes })}
           >
-            flat
+            linear
           </button>
           <button
             type="button"
             aria-pressed={mode === 'curve'}
-            title="Speed varies over the cycle (this curve)"
+            title="Smooth spline through the nodes"
             onClick={() => onMeta({ ...meta, speedMode: 'curve', curveNodes: nodes })}
           >
             curve
@@ -208,16 +209,24 @@ function SpeedCurveEditor({
           <button
             type="button"
             aria-pressed={seam === 'smooth'}
-            title="Speed flows continuously from cycle end into the next"
-            onClick={() => onMeta({ ...meta, loopSeam: 'smooth' })}
+            title="Start and end anchors locked together — speed flows continuously across cycles"
+            onClick={() =>
+              // Entering smooth mode snaps the end anchor onto node 0 in the
+              // data (moveCurveNode's anchor-sync does exactly that).
+              onMeta({
+                ...meta,
+                loopSeam: 'smooth',
+                curveNodes: moveCurveNode(nodes, 0, 0, nodes[0].multiplier, 'smooth'),
+              })
+            }
           >
             smooth
           </button>
           <button
             type="button"
             aria-pressed={seam === 'hard'}
-            title="Speed holds after the last node, then jumps at the cycle restart"
-            onClick={() => onMeta({ ...meta, loopSeam: 'hard' })}
+            title="Anchors move independently — speed pops at the cycle restart"
+            onClick={() => onMeta({ ...meta, loopSeam: 'hard', curveNodes: nodes })}
           >
             hard
           </button>
@@ -227,7 +236,7 @@ function SpeedCurveEditor({
           className="curve-node-btn"
           aria-label="Add curve node"
           disabled={nodes.length >= MAX_CURVE_NODES}
-          onClick={() => setNodes(addCurveNode(nodes, seam))}
+          onClick={() => setNodes(addCurveNode(nodes, seam, mode))}
         >
           +
         </button>
@@ -235,7 +244,7 @@ function SpeedCurveEditor({
           type="button"
           className="curve-node-btn"
           aria-label="Remove curve node"
-          disabled={nodes.length <= 1}
+          disabled={nodes.length <= 2}
           onClick={() => setNodes(removeCurveNode(nodes))}
         >
           −
@@ -266,7 +275,7 @@ function SpeedCurveEditor({
         {nodes.map((node, i) => (
           <circle
             key={i}
-            className={`speed-curve-node${i === 0 ? ' anchor' : ''}`}
+            className={`speed-curve-node${i === 0 || i === nodes.length - 1 ? ' anchor' : ''}`}
             cx={curveX(node.phase)}
             cy={curveY(node.multiplier)}
             r={4.5}
@@ -347,28 +356,14 @@ function SliderControls({
         {numField('min', 'min')}
         {numField('step', 'step')}
         {numField('max', 'max')}
-        <label className="slider-field" title="Animation speed multiplier (0.25×–4×)">
-          speed
-          <input
-            type="number"
-            value={meta.speed ?? 1}
-            min={SPEED_MIN}
-            max={SPEED_MAX}
-            step={0.25}
-            onChange={(e) => {
-              const v = Number(e.target.value);
-              if (Number.isFinite(v)) onMeta({ ...meta, speed: clampSpeed(v) });
-            }}
-          />
-        </label>
         <button
           type="button"
           className="curve-toggle"
-          title="Speed curve (advanced): vary the speed over the cycle"
+          title="Animation speed: drag nodes on the graph (0.25×–4×, linear or curved)"
           aria-expanded={advanced}
           onClick={() => setAdvanced((a) => !a)}
         >
-          curve {advanced ? '▾' : '▸'}
+          speed {advanced ? '▾' : '▸'}
         </button>
       </div>
       {advanced && <SpeedCurveEditor meta={meta} onMeta={onMeta} />}

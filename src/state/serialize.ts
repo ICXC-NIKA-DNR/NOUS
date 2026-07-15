@@ -15,7 +15,13 @@ import type { AngleMode } from '../core/evaluator.ts';
 import type { SliderMeta } from '../ui/ExpressionRow.tsx';
 import type { Viewport } from '../plot/viewport.ts';
 import { mintId, type ExpressionItem, type FolderItem, type GcalcDocument, type Item } from './document.ts';
-import { MAX_CURVE_NODES, SPEED_MAX, SPEED_MIN } from './sliderAnim.ts';
+import {
+  defaultCurveNodes,
+  MAX_CURVE_NODES,
+  normalizedCurveNodes,
+  SPEED_MAX,
+  SPEED_MIN,
+} from './sliderAnim.ts';
 
 export const NOUS_FORMAT = 'nous';
 export const NOUS_VERSION = 1;
@@ -106,11 +112,11 @@ function serializeItem(item: Item): SerializedItem {
     if (item.slider) {
       // Field-by-field in canonical order: the in-memory meta's key order
       // depends on UI spread history, and save→load→save must be
-      // byte-identical (the stability test).
+      // byte-identical (the stability test). The legacy M1 scalar `speed`
+      // is read on load (seeding the node anchors) but never written.
       const s = item.slider;
       const slider: SliderMeta = { min: s.min, max: s.max, step: s.step };
       if (s.playing !== undefined) slider.playing = s.playing;
-      if (s.speed !== undefined) slider.speed = s.speed;
       if (s.speedMode !== undefined) slider.speedMode = s.speedMode;
       if (s.curveNodes !== undefined) {
         slider.curveNodes = s.curveNodes.map((n) => ({ phase: n.phase, multiplier: n.multiplier }));
@@ -190,12 +196,15 @@ function parseSlider(v: unknown, path: string): SliderMeta {
   };
   // Slider-Anim-M1 fields — optional so pre-animation documents load as-is.
   if (v.playing !== undefined) out.playing = expectBoolean(v.playing, `${path}.playing`);
+  // Legacy M1 scalar speed: validated and used below to seed the node
+  // anchors, but no longer a SliderMeta field (Slider-Anim-M3).
+  let legacySpeed: number | undefined;
   if (v.speed !== undefined) {
     const speed = expectFiniteNumber(v.speed, `${path}.speed`);
     if (speed < SPEED_MIN || speed > SPEED_MAX) {
       throw new NousFormatError(`speed out of range ${SPEED_MIN}–${SPEED_MAX}`, `${path}.speed`);
     }
-    out.speed = speed;
+    legacySpeed = speed;
   }
   // Slider-Anim-M2 speed-curve fields.
   if (v.speedMode !== undefined) {
@@ -238,6 +247,15 @@ function parseSlider(v: unknown, path: string): SliderMeta {
       throw new NousFormatError('expected "smooth" or "hard"', `${path}.loopSeam`);
     }
     out.loopSeam = v.loopSeam;
+  }
+  // Normalize to the M3 node model: legacy curves gain their end anchor
+  // (rules that reproduce the old playback), and legacy flat speeds — or a
+  // speedMode with no nodes at all — seed a constant two-anchor line. Plain
+  // sliders with none of the animation fields stay minimal.
+  if (out.curveNodes !== undefined) {
+    out.curveNodes = normalizedCurveNodes(out);
+  } else if (legacySpeed !== undefined || out.speedMode !== undefined) {
+    out.curveNodes = defaultCurveNodes(legacySpeed ?? 1);
   }
   return out;
 }

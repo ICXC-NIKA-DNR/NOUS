@@ -16,6 +16,7 @@ import {
   metaMultiplier,
   MIN_NODE_GAP,
   moveCurveNode,
+  normalizedCurveNodes,
   phaseFromValue,
   prepareCurve,
   removeCurveNode,
@@ -203,75 +204,165 @@ test('spline: defensive about out-of-range multipliers from hostile input', () =
   }
 });
 
-/* ---- Slider-Anim-M2: node CRUD ---- */
+/* ---- Slider-Anim-M3: linear interpolation & node normalization ---- */
 
-test('addCurveNode: caps at MAX_CURVE_NODES, keeps sort order, preserves shape', () => {
+test('linear mode: straight segments in log₂ space through the same nodes', () => {
+  const at = prepareCurve(
+    [
+      { phase: 0, multiplier: 1 },
+      { phase: 1, multiplier: 4 },
+    ],
+    'hard',
+    'flat',
+  );
+  // log₂ lerp: 0 → 2 over [0,1]; midpoint = 2¹ = 2×, quarter = 2^0.5.
+  assert.ok(Math.abs(at(0.5) - 2) < 1e-12);
+  assert.ok(Math.abs(at(0.25) - 2 ** 0.5) < 1e-12);
+  // Two equal anchors = the old constant flat speed, in either mode.
+  const flat = prepareCurve(defaultCurveNodes(2), 'smooth', 'flat');
+  const curved = prepareCurve(defaultCurveNodes(2), 'smooth', 'curve');
+  for (const p of [0, 0.3, 0.7]) {
+    assert.equal(flat(p), 2);
+    assert.equal(curved(p), 2);
+  }
+});
+
+test('seam lock: smooth forces the end anchor onto node 0, hard keeps the pop', () => {
+  const nodes: CurveNode[] = [
+    { phase: 0, multiplier: 1 },
+    { phase: 1, multiplier: 4 }, // anchors deliberately unequal
+  ];
+  // Hard: the stored end anchor stands — speed approaches 4× then pops to 1×.
+  const hard = prepareCurve(nodes, 'hard', 'curve');
+  assert.ok(Math.abs(hard(0.9999) - 4) < 0.01);
+  assert.equal(hard(0), 1);
+  // Smooth: the lock overrides the stored value — no pop.
+  const smooth = prepareCurve(nodes, 'smooth', 'curve');
+  assert.ok(Math.abs(smooth(0.9999) - 1) < 0.01);
+  assert.equal(smooth(1), smooth(0));
+});
+
+test('normalizedCurveNodes: seeds, upgrades legacy lists, passes anchored lists through', () => {
+  // Absent → two 1× anchors.
+  assert.deepEqual(normalizedCurveNodes({}), defaultCurveNodes());
+  // Legacy hard list → end anchor at the held last value (old playback kept).
+  const hard = normalizedCurveNodes({
+    curveNodes: [
+      { phase: 0, multiplier: 1 },
+      { phase: 0.5, multiplier: 4 },
+    ],
+    loopSeam: 'hard',
+  });
+  assert.deepEqual(hard[hard.length - 1], { phase: 1, multiplier: 4 });
+  // Legacy smooth list → end anchor at node 0's value.
+  const smooth = normalizedCurveNodes({
+    curveNodes: [
+      { phase: 0, multiplier: 1 },
+      { phase: 0.5, multiplier: 4 },
+    ],
+    loopSeam: 'smooth',
+  });
+  assert.deepEqual(smooth[smooth.length - 1], { phase: 1, multiplier: 1 });
+  // A full legacy list has no room: its last free node becomes the anchor.
+  const full = normalizedCurveNodes({
+    curveNodes: [0, 0.2, 0.4, 0.6, 0.8].map((phase) => ({ phase, multiplier: 2 })),
+    loopSeam: 'hard',
+  });
+  assert.equal(full.length, MAX_CURVE_NODES);
+  assert.deepEqual(full[full.length - 1], { phase: 1, multiplier: 2 });
+  // Already anchored → unchanged, same reference.
+  assert.equal(normalizedCurveNodes({ curveNodes: hard }), hard);
+});
+
+/* ---- Slider-Anim-M3: node CRUD (2 anchors + up to 3 middles) ---- */
+
+test('addCurveNode: middles only, caps at 5 total, preserves shape and order', () => {
   let nodes = defaultCurveNodes(2);
-  assert.deepEqual(nodes, [{ phase: 0, multiplier: 2 }]);
-  const before = prepareCurve(nodes, 'hard');
-  for (let i = 0; i < 10; i++) nodes = addCurveNode(nodes, 'hard');
+  assert.equal(nodes.length, 2);
+  const before = prepareCurve(nodes, 'hard', 'curve');
+  for (let i = 0; i < 10; i++) nodes = addCurveNode(nodes, 'hard', 'curve');
   assert.equal(nodes.length, MAX_CURVE_NODES);
   for (let i = 1; i < nodes.length; i++) assert.ok(nodes[i].phase > nodes[i - 1].phase);
   assert.equal(nodes[0].phase, 0);
+  assert.equal(nodes[nodes.length - 1].phase, 1); // end anchor stays the end
   // New nodes land on the existing curve, so the shape is unchanged.
-  const after = prepareCurve(nodes, 'hard');
+  const after = prepareCurve(nodes, 'hard', 'curve');
   for (let i = 0; i <= 20; i++) {
     assert.ok(Math.abs(after(i / 20) - before(i / 20)) < 1e-9);
   }
 });
 
-test('removeCurveNode: floors at 1 node and never removes the anchor', () => {
+test('removeCurveNode: floors at the 2 anchors, removes middles only', () => {
   let nodes = defaultCurveNodes(1);
-  nodes = addCurveNode(nodes, 'hard');
-  nodes = addCurveNode(nodes, 'hard');
-  assert.equal(nodes.length, 3);
+  nodes = addCurveNode(nodes, 'hard', 'flat');
+  nodes = addCurveNode(nodes, 'hard', 'flat');
+  assert.equal(nodes.length, 4);
   nodes = removeCurveNode(nodes);
   nodes = removeCurveNode(nodes);
-  assert.equal(nodes.length, 1);
-  assert.equal(nodes[0].phase, 0); // the anchor survives
+  assert.equal(nodes.length, 2);
+  assert.equal(nodes[0].phase, 0); // both anchors survive
+  assert.equal(nodes[1].phase, 1);
   assert.equal(removeCurveNode(nodes), nodes); // floor: no-op
 });
 
-test('moveCurveNode: anchor x is immutable, y clamps to the speed range', () => {
+test('moveCurveNode: anchor x pinned; smooth seam locks both anchors’ y together', () => {
   const nodes = defaultCurveNodes(1);
-  const moved = moveCurveNode(nodes, 0, 0.7, 9);
-  assert.equal(moved[0].phase, 0);
-  assert.equal(moved[0].multiplier, SPEED_MAX);
-  assert.equal(moveCurveNode(nodes, 0, 0.3, 0.01)[0].multiplier, SPEED_MIN);
+  // Hard: anchors move vertically, independently.
+  const start = moveCurveNode(nodes, 0, 0.7, 9, 'hard');
+  assert.equal(start[0].phase, 0);
+  assert.equal(start[0].multiplier, SPEED_MAX); // y clamps
+  assert.equal(start[1].multiplier, 1); // end anchor untouched
+  const end = moveCurveNode(nodes, 1, 0.3, 0.01, 'hard');
+  assert.equal(end[1].phase, 1);
+  assert.equal(end[1].multiplier, SPEED_MIN);
+  assert.equal(end[0].multiplier, 1);
+  // Smooth: dragging either anchor moves both.
+  const synced = moveCurveNode(nodes, 1, 0.3, 3, 'smooth');
+  assert.equal(synced[0].multiplier, 3);
+  assert.equal(synced[1].multiplier, 3);
+  assert.equal(synced[0].phase, 0);
+  assert.equal(synced[1].phase, 1);
 });
 
-test('moveCurveNode: x clamps between neighbors — nodes never cross', () => {
+test('moveCurveNode: middle x clamps between neighbors — nodes never cross', () => {
   const nodes: CurveNode[] = [
     { phase: 0, multiplier: 1 },
     { phase: 0.3, multiplier: 2 },
     { phase: 0.6, multiplier: 1 },
+    { phase: 1, multiplier: 1 },
   ];
-  // Drag the middle node far right: stops MIN_NODE_GAP short of its neighbor.
-  const right = moveCurveNode(nodes, 1, 0.95, 2);
+  // Drag a middle node far right: stops MIN_NODE_GAP short of its neighbor.
+  const right = moveCurveNode(nodes, 1, 0.95, 2, 'hard');
   assert.ok(Math.abs(right[1].phase - (0.6 - MIN_NODE_GAP)) < 1e-12);
-  // Far left: stops MIN_NODE_GAP past the anchor.
-  const left = moveCurveNode(nodes, 1, -5, 2);
+  // Far left: stops MIN_NODE_GAP past the start anchor.
+  const left = moveCurveNode(nodes, 1, -5, 2, 'hard');
   assert.ok(Math.abs(left[1].phase - MIN_NODE_GAP) < 1e-12);
-  // The last node's right boundary is the cycle end.
-  const end = moveCurveNode(nodes, 2, 2, 2);
+  // The last middle's right boundary is the end anchor.
+  const end = moveCurveNode(nodes, 2, 2, 2, 'hard');
   assert.ok(Math.abs(end[2].phase - (1 - MIN_NODE_GAP)) < 1e-12);
   for (const out of [right, left, end]) {
     for (let i = 1; i < out.length; i++) assert.ok(out[i].phase > out[i - 1].phase);
   }
 });
 
-/* ---- Slider-Anim-M2: curve-driven integration ---- */
+/* ---- curve-driven integration ---- */
 
-test('metaMultiplier: speedMode picks the source; both configs coexist', () => {
-  const meta = {
-    speed: 2,
-    speedMode: 'flat' as const,
-    curveNodes: [{ phase: 0, multiplier: 0.5 }],
-  };
-  assert.equal(metaMultiplier(meta)(0.3), 2);
-  assert.equal(metaMultiplier({ ...meta, speedMode: 'curve' })(0.3), 0.5);
-  // No curve stored yet: curve mode falls back to flat rather than crashing.
-  assert.equal(metaMultiplier({ speed: 3, speedMode: 'curve' })(0), 3);
+test('metaMultiplier: node graph drives playback; speedMode picks interpolation', () => {
+  const nodes: CurveNode[] = [
+    { phase: 0, multiplier: 1 },
+    { phase: 0.5, multiplier: 4 },
+    { phase: 1, multiplier: 1 },
+  ];
+  // Linear vs PCHIP differ mid-segment on the same nodes (with 2 nodes PCHIP
+  // degenerates to the same straight line, so use 3).
+  const linear = metaMultiplier({ speedMode: 'flat', curveNodes: nodes, loopSeam: 'hard' });
+  const curved = metaMultiplier({ speedMode: 'curve', curveNodes: nodes, loopSeam: 'hard' });
+  assert.ok(Math.abs(linear(0.25) - 2) < 1e-12); // log-lerp midpoint of 1×→4×
+  assert.ok(Math.abs(curved(0.25) - 2 ** 1.25) < 1e-12); // PCHIP hand value
+  assert.equal(linear(0.5), curved(0.5)); // both pass through the nodes
+  // Fresh sliders (no nodes) run at 1×.
+  assert.equal(metaMultiplier({})(0.3), 1);
+  assert.equal(metaMultiplier({ speedMode: 'curve' })(0.3), 1);
 });
 
 test('integration through a curve: fast half / slow half take asymmetric time', () => {

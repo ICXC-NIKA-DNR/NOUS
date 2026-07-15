@@ -71,28 +71,40 @@ export function formatSliderValue(value: number, step: number): string {
 /* ------------------------------------------------------------------ */
 //
 // A per-slider speed ramp: up to MAX_CURVE_NODES control points over one
-// cycle (phase 0–1), interpolated with a monotone cubic Hermite spline
-// (Fritsch–Carlson / PCHIP) in log₂(multiplier) space. Log space matches the
-// editor's log-scaled y-axis (1× is the log-midpoint of 0.25×–4×) and
-// guarantees positivity; the monotone tangents guarantee the curve never
-// overshoots outside the band its own nodes span — no post-clamp kinks.
+// cycle (phase 0–1). Two fixed anchors — node 0 at phase 0 and the last node
+// at phase 1, both vertical-drag only — plus up to 3 free middle nodes.
+// Interpolation is a per-slider choice (Slider-Anim-M3; this replaced the
+// separate scalar flat-speed field — "flat" is now the same node graph with
+// straight segments):
+//   'flat'  — linear segments between nodes (linear in log₂ space, so they
+//             draw as straight lines on the log-scaled editor).
+//   'curve' — monotone cubic Hermite spline (Fritsch–Carlson / PCHIP).
+// Both interpolate in log₂(multiplier) space: it matches the editor's
+// log-scaled y-axis (1× is the log-midpoint of 0.25×–4×), guarantees
+// positivity, and PCHIP's monotone tangents never overshoot the band the
+// nodes span — no post-clamp kinks.
 //
-// The seam (phase 1 wrapping to 0) is a per-slider choice:
-//   'smooth' — periodic: the segment after the last node lands on node 0's
-//              value at phase 1 with matching tangents, so instantaneous
-//              speed is continuous across cycles.
-//   'hard'   — the last node's value holds flat to phase 1, then speed jumps
-//              to node 0's value as the next cycle starts (video-editor
-//              speed-ramp behavior; position is continuous either way).
+// The seam (phase 1 wrapping to 0) is a per-slider choice governing the end
+// anchor:
+//   'smooth' — the end anchor's y is LOCKED equal to node 0's y (matching
+//              tangents under PCHIP), so instantaneous speed is continuous
+//              across cycles.
+//   'hard'   — the end anchor is independently draggable; the gap between
+//              its y and node 0's y is the speed pop at the cycle restart
+//              (position is continuous either way).
 
 export interface CurveNode {
-  /** 0–1 through one min→max→min cycle. curveNodes[0].phase is always 0. */
+  /** 0–1 through one min→max→min cycle. curveNodes[0].phase is always 0 and
+   * the last node's phase is always 1 — the two anchors. */
   phase: number;
   /** Instantaneous speed multiplier, SPEED_MIN–SPEED_MAX. */
   multiplier: number;
 }
 
 export type LoopSeam = 'smooth' | 'hard';
+
+/** Interpolation between nodes: straight segments ('flat') or PCHIP ('curve'). */
+export type SpeedMode = 'flat' | 'curve';
 
 export const MAX_CURVE_NODES = 5;
 
@@ -111,27 +123,36 @@ function fcTangent(dLeft: number, dRight: number, hLeft: number, hRight: number)
 }
 
 /**
- * Build an evaluator for the spline: phase ∈ [0, 1) → multiplier. Prepared
- * once per frame (or per redraw) and evaluated at any phase; defensive about
- * malformed node lists (unsorted input is handled by the editor/parser —
- * here zero-width segments are simply skipped).
+ * Build an evaluator: phase ∈ [0, 1) → multiplier. Prepared once per frame
+ * (or per redraw) and evaluated at any phase. Defensive about malformed node
+ * lists (zero-width segments skipped, legacy lists without an end anchor get
+ * one appended by the old M2 rules) — the editor and parser normalize before
+ * data gets here, but direct callers may not.
  */
-export function prepareCurve(nodes: CurveNode[], seam: LoopSeam): (phase: number) => number {
+export function prepareCurve(
+  nodes: CurveNode[],
+  seam: LoopSeam,
+  mode: SpeedMode = 'curve',
+): (phase: number) => number {
   if (nodes.length === 0) return () => 1;
   const xs: number[] = [];
   const ys: number[] = []; // log₂(multiplier)
-  for (const n of nodes) {
-    const x = Math.min(1, Math.max(0, n.phase));
+  for (const node of nodes) {
+    const x = Math.min(1, Math.max(0, node.phase));
     if (xs.length > 0 && x - xs[xs.length - 1] < 1e-9) continue; // zero-width
     xs.push(x);
-    ys.push(Math.log2(clampSpeed(n.multiplier)));
+    ys.push(Math.log2(clampSpeed(node.multiplier)));
   }
-  // End knot at phase 1: node 0's value (smooth seam) or a flat hold (hard).
-  const periodic = seam === 'smooth' && 1 - xs[xs.length - 1] >= 1e-9;
+  // Defensive path for un-normalized lists: append the end anchor (smooth →
+  // node 0's value, hard → hold the last value, matching legacy behavior).
   if (1 - xs[xs.length - 1] >= 1e-9) {
     xs.push(1);
-    ys.push(periodic ? ys[0] : ys[ys.length - 1]);
+    ys.push(seam === 'smooth' ? ys[0] : ys[ys.length - 1]);
   }
+  // The seam lock: under 'smooth' the end anchor's y IS node 0's y, whatever
+  // the stored value says (the editor keeps them synced; this guards data
+  // that arrived by other routes, e.g. a seam toggle on a hard-edited file).
+  if (seam === 'smooth') ys[ys.length - 1] = ys[0];
   const n = xs.length;
   if (n === 1) {
     const constant = 2 ** ys[0];
@@ -143,22 +164,29 @@ export function prepareCurve(nodes: CurveNode[], seam: LoopSeam): (phase: number
     h.push(xs[i + 1] - xs[i]);
     d.push((ys[i + 1] - ys[i]) / h[i]);
   }
-  const m: number[] = new Array(n);
-  for (let i = 1; i < n - 1; i++) m[i] = fcTangent(d[i - 1], d[i], h[i - 1], h[i]);
-  if (periodic) {
-    // The seam segment (last → end knot) is node 0's left neighbor one cycle
-    // earlier; the end knot IS node 0, so both share the periodic tangent.
-    m[0] = fcTangent(d[n - 2], d[0], h[n - 2], h[0]);
-    m[n - 1] = m[0];
-  } else {
-    m[0] = d[0];
-    m[n - 1] = d[n - 2];
+  const m: number[] = new Array(n).fill(0);
+  if (mode === 'curve') {
+    for (let i = 1; i < n - 1; i++) m[i] = fcTangent(d[i - 1], d[i], h[i - 1], h[i]);
+    if (seam === 'smooth') {
+      // Periodic: the seam segment (last → end anchor ≡ node 0) is node 0's
+      // left neighbor one cycle earlier, so both anchors share the tangent.
+      m[0] = fcTangent(d[n - 2], d[0], h[n - 2], h[0]);
+      m[n - 1] = m[0];
+    } else {
+      m[0] = d[0];
+      m[n - 1] = d[n - 2];
+    }
   }
   return (phase: number): number => {
     const p = Math.min(1, Math.max(0, phase - Math.floor(phase)));
     let i = 0;
     while (i < n - 2 && p > xs[i + 1]) i++;
     const t = (p - xs[i]) / h[i];
+    if (mode === 'flat') {
+      // Straight segment in log space — a straight line on the log-scaled
+      // editor, and two equal anchors reproduce the old constant flat speed.
+      return clampSpeed(2 ** (ys[i] + t * (ys[i + 1] - ys[i])));
+    }
     const t2 = t * t;
     const t3 = t2 * t;
     const y =
@@ -170,53 +198,94 @@ export function prepareCurve(nodes: CurveNode[], seam: LoopSeam): (phase: number
   };
 }
 
-/** Default curve: one anchor node — equivalent to the flat speed. */
+/** Default curve: the two anchors at the same height — a constant speed. */
 export function defaultCurveNodes(speed = 1): CurveNode[] {
-  return [{ phase: 0, multiplier: clampSpeed(speed) }];
+  const m = clampSpeed(speed);
+  return [
+    { phase: 0, multiplier: m },
+    { phase: 1, multiplier: m },
+  ];
 }
 
-/** Add a node at the midpoint of the widest phase gap (the span from the
- * last node to 1.0 counts), at the curve's current value there — so adding
- * a node barely changes the shape. Capped at MAX_CURVE_NODES. */
-export function addCurveNode(nodes: CurveNode[], seam: LoopSeam): CurveNode[] {
-  if (nodes.length === 0) return defaultCurveNodes();
+/**
+ * Canonical node list for a meta: always ≥ 2 nodes with anchors at phase 0
+ * and 1. Seeds a constant curve when nodes are absent, and upgrades legacy
+ * M2 lists (which had no end anchor) by the rules that reproduce their old
+ * playback exactly: hard seam → end anchor at the held last value, smooth →
+ * at node 0's value. A full 5-node legacy list has no room to append, so its
+ * last free node becomes the end anchor (the one case that can shift shape;
+ * realistically unreachable). Used by the parser on load and the editor on
+ * first edit — playback tolerates un-normalized data via prepareCurve's
+ * defensive path either way.
+ */
+export function normalizedCurveNodes(meta: {
+  curveNodes?: CurveNode[];
+  loopSeam?: LoopSeam;
+}): CurveNode[] {
+  const nodes = meta.curveNodes;
+  if (nodes === undefined || nodes.length === 0) return defaultCurveNodes();
+  const last = nodes[nodes.length - 1];
+  if (last.phase >= 1 - 1e-9) return nodes;
+  const seam = meta.loopSeam ?? 'smooth';
+  const endMultiplier = seam === 'smooth' ? nodes[0].multiplier : last.multiplier;
+  if (nodes.length >= MAX_CURVE_NODES) {
+    return [...nodes.slice(0, -1), { phase: 1, multiplier: endMultiplier }];
+  }
+  return [...nodes, { phase: 1, multiplier: endMultiplier }];
+}
+
+/** Add a middle node at the midpoint of the widest phase gap, at the curve's
+ * current value there — so adding a node barely changes the shape. Capped at
+ * MAX_CURVE_NODES (2 anchors + 3 middles). Expects normalized nodes. */
+export function addCurveNode(nodes: CurveNode[], seam: LoopSeam, mode: SpeedMode): CurveNode[] {
+  if (nodes.length < 2) return normalizedCurveNodes({ curveNodes: nodes, loopSeam: seam });
   if (nodes.length >= MAX_CURVE_NODES) return nodes;
   let gapStart = 0;
   let gapWidth = -1;
-  for (let i = 0; i < nodes.length; i++) {
-    const end = i + 1 < nodes.length ? nodes[i + 1].phase : 1;
-    if (end - nodes[i].phase > gapWidth) {
-      gapWidth = end - nodes[i].phase;
+  for (let i = 0; i < nodes.length - 1; i++) {
+    if (nodes[i + 1].phase - nodes[i].phase > gapWidth) {
+      gapWidth = nodes[i + 1].phase - nodes[i].phase;
       gapStart = nodes[i].phase;
     }
   }
   const phase = gapStart + gapWidth / 2;
-  const multiplier = prepareCurve(nodes, seam)(phase);
+  const multiplier = prepareCurve(nodes, seam, mode)(phase);
   const out = nodes.slice();
   const at = out.findIndex((node) => node.phase > phase);
-  out.splice(at === -1 ? out.length : at, 0, { phase, multiplier });
+  out.splice(at === -1 ? out.length - 1 : at, 0, { phase, multiplier });
   return out;
 }
 
-/** Remove the highest-phase node. Node 0 (the anchor) is never removed. */
+/** Remove the highest-phase MIDDLE node. The two anchors are never removed,
+ * so the floor is 2 (a constant-speed line between the anchors). */
 export function removeCurveNode(nodes: CurveNode[]): CurveNode[] {
-  return nodes.length > 1 ? nodes.slice(0, -1) : nodes;
+  if (nodes.length <= 2) return nodes;
+  return [...nodes.slice(0, -2), nodes[nodes.length - 1]];
 }
 
-/** Move a node: multiplier clamps to the speed range; phase clamps between
- * its neighbors (with MIN_NODE_GAP) so nodes stay sorted and never cross.
- * Node 0's phase is pinned at 0 — it only moves vertically. */
+/** Move a node: multiplier clamps to the speed range; a middle node's phase
+ * clamps between its neighbors (with MIN_NODE_GAP) so nodes stay sorted and
+ * never cross. The anchors (node 0 at phase 0, the last node at phase 1)
+ * only move vertically — and under a 'smooth' seam their y's are locked
+ * together, so dragging either one moves both. */
 export function moveCurveNode(
   nodes: CurveNode[],
   index: number,
   phase: number,
   multiplier: number,
+  seam: LoopSeam,
 ): CurveNode[] {
   if (index < 0 || index >= nodes.length) return nodes;
   const out = nodes.slice();
   const m = clampSpeed(multiplier);
-  if (index === 0) {
-    out[0] = { phase: 0, multiplier: m };
+  const lastIndex = out.length - 1;
+  const isEndAnchor = index === lastIndex && out[index].phase >= 1 - 1e-9;
+  if (index === 0 || isEndAnchor) {
+    out[index] = { phase: index === 0 ? 0 : 1, multiplier: m };
+    if (seam === 'smooth' && out.length >= 2 && out[lastIndex].phase >= 1 - 1e-9) {
+      out[0] = { phase: 0, multiplier: m };
+      out[lastIndex] = { phase: 1, multiplier: m };
+    }
     return out;
   }
   const lo = out[index - 1].phase + MIN_NODE_GAP;
@@ -226,17 +295,13 @@ export function moveCurveNode(
   return out;
 }
 
-/** The per-frame multiplier source for a slider: its curve when speedMode is
- * 'curve' (defaulting the seam to 'smooth'), else the flat speed. */
+/** The per-frame multiplier source for a slider: its node graph, linear or
+ * PCHIP per speedMode. Metas with no nodes (fresh sliders) run at 1×. */
 export function metaMultiplier(meta: {
-  speed?: number;
-  speedMode?: 'flat' | 'curve';
+  speedMode?: SpeedMode;
   curveNodes?: CurveNode[];
   loopSeam?: LoopSeam;
 }): (phase: number) => number {
-  if (meta.speedMode === 'curve' && meta.curveNodes !== undefined && meta.curveNodes.length > 0) {
-    return prepareCurve(meta.curveNodes, meta.loopSeam ?? 'smooth');
-  }
-  const s = clampSpeed(meta.speed ?? 1);
-  return () => s;
+  if (meta.curveNodes === undefined || meta.curveNodes.length === 0) return () => 1;
+  return prepareCurve(meta.curveNodes, meta.loopSeam ?? 'smooth', meta.speedMode ?? 'flat');
 }

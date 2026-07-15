@@ -25,18 +25,18 @@ import {
 /** A document exercising every serialized feature: nested folders, sliders,
  * hidden items, collapsed folders, restricted domains, unicode sources. */
 function complexDocument(): GcalcDocument {
-  // Animation fields (Slider-Anim-M1/M2) ride through every round-trip test.
+  // Animation fields (Slider-Anim-M1/M3) ride through every round-trip test:
+  // anchored node list (phase 0 and 1), interpolation mode, seam.
   const slider = makeExpression('a = 2', {
     min: -5,
     max: 5,
     step: 0.1,
     playing: true,
-    speed: 2,
     speedMode: 'curve',
     curveNodes: [
       { phase: 0, multiplier: 0.5 },
       { phase: 0.4, multiplier: 4 },
-      { phase: 0.9, multiplier: 1 },
+      { phase: 1, multiplier: 1 },
     ],
     loopSeam: 'hard',
   });
@@ -211,22 +211,24 @@ test('rejects malformed sliders and viewports', () => {
   assertRejects({ ...good(), viewport: { ...viewport, yMin: Infinity } });
 });
 
-test('slider animation fields are optional and validated (Slider-Anim-M1)', () => {
-  // Pre-animation sliders (no playing/speed) still load.
-  const bare = {
-    ...good(),
-    items: [{ kind: 'expression', source: 'a=1', colorIndex: 0, visible: true, slider: { min: 0, max: 5, step: 1 } }],
-  };
-  const loaded = parseNousJson(JSON.stringify(bare));
-  const item = loaded.doc.items[0];
-  assert.ok(item.kind === 'expression');
-  assert.equal(item.slider?.playing, undefined);
-  assert.equal(item.slider?.speed, undefined);
+const withAnim = (slider: Record<string, unknown>): Record<string, unknown> => ({
+  ...good(),
+  items: [{ kind: 'expression', source: 'a=1', colorIndex: 0, visible: true, slider }],
+});
 
-  const withAnim = (slider: Record<string, unknown>): Record<string, unknown> => ({
-    ...good(),
-    items: [{ kind: 'expression', source: 'a=1', colorIndex: 0, visible: true, slider }],
-  });
+/** Load a one-slider document and hand back its SliderMeta. */
+function loadSlider(slider: Record<string, unknown>) {
+  const item = parseNousJson(JSON.stringify(withAnim(slider))).doc.items[0];
+  assert.ok(item.kind === 'expression');
+  return item.slider!;
+}
+
+test('slider animation fields are optional and validated (Slider-Anim-M1)', () => {
+  // Pre-animation sliders stay minimal — no animation fields materialize.
+  const bare = loadSlider({ min: 0, max: 5, step: 1 });
+  assert.equal(bare.playing, undefined);
+  assert.equal(bare.curveNodes, undefined);
+
   assertRejects(withAnim({ min: 0, max: 5, step: 1, playing: 'yes' }), 'items[0].slider.playing');
   assertRejects(withAnim({ min: 0, max: 5, step: 1, speed: 8 }), 'items[0].slider.speed');
   assertRejects(withAnim({ min: 0, max: 5, step: 1, speed: 0 }), 'items[0].slider.speed');
@@ -246,6 +248,53 @@ test('slider animation fields are optional and validated (Slider-Anim-M1)', () =
   assertRejects(withAnim({ ...base, curveNodes: [node(0, 1), node(0.6, 2), node(0.3, 2)] }), 'curveNodes[2].phase');
   assertRejects(withAnim({ ...base, curveNodes: [node(0, 1), node(1.5, 2)] }), 'curveNodes[1].phase');
   assertRejects(withAnim({ ...base, curveNodes: [node(0, 1), node(0.5, 40)] }), 'curveNodes[1].multiplier');
+});
+
+test('legacy M1/M2 sliders normalize to the anchored node model (Slider-Anim-M3)', () => {
+  const base = { min: 0, max: 5, step: 1 };
+  // M1 scalar speed → two anchors at that speed; the scalar is dropped.
+  const flat = loadSlider({ ...base, speed: 2 });
+  assert.deepEqual(flat.curveNodes, [
+    { phase: 0, multiplier: 2 },
+    { phase: 1, multiplier: 2 },
+  ]);
+  assert.ok(!('speed' in flat));
+  // M2 hard curve (no end anchor) → anchor at the held last value.
+  const hard = loadSlider({
+    ...base,
+    loopSeam: 'hard',
+    curveNodes: [
+      { phase: 0, multiplier: 1 },
+      { phase: 0.5, multiplier: 4 },
+    ],
+  });
+  assert.deepEqual(hard.curveNodes![2], { phase: 1, multiplier: 4 });
+  // M2 smooth curve → anchor at node 0's value (seam continuity kept).
+  const smooth = loadSlider({
+    ...base,
+    curveNodes: [
+      { phase: 0, multiplier: 1 },
+      { phase: 0.5, multiplier: 4 },
+    ],
+  });
+  assert.deepEqual(smooth.curveNodes![2], { phase: 1, multiplier: 1 });
+  // speedMode without nodes (the M2 fallback leak) → seeded constant line.
+  const seeded = loadSlider({ ...base, speedMode: 'curve', speed: 3 });
+  assert.deepEqual(seeded.curveNodes, [
+    { phase: 0, multiplier: 3 },
+    { phase: 1, multiplier: 3 },
+  ]);
+  // Normalized output round-trips byte-stably.
+  const once = parseNousJson(documentToJson(parseNousJson(JSON.stringify(withAnim({
+    ...base,
+    speed: 2,
+    curveNodes: [
+      { phase: 0, multiplier: 1 },
+      { phase: 0.5, multiplier: 4 },
+    ],
+  }))).doc));
+  const json = documentToJson(once.doc);
+  assert.equal(documentToJson(parseNousJson(json).doc), json);
 });
 
 /* ---- hostile input: depth caps and numeric bounds (M10 security pass) ---- */
