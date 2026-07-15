@@ -154,11 +154,11 @@ test('spline: known interpolated value (hand-computed PCHIP in log₂ space)', (
     'hard',
   );
   assert.ok(Math.abs(at(0.25) - 2 ** 1.25) < 1e-12);
-  // Past the last node the hard seam holds the value flat…
+  // Past the last node the hard seam holds the value flat, INCLUDING the
+  // domain end — the evaluator clamps rather than wraps (M4: phase 1 is the
+  // end anchor; playback wraps in advancePhase before it ever gets here).
   assert.ok(Math.abs(at(0.75) - 4) < 1e-12);
-  assert.ok(Math.abs(at(0.9999) - 4) < 1e-12);
-  // …and phase 1 ≡ phase 0 (the wrap happens inside the evaluator).
-  assert.equal(at(1), at(0));
+  assert.ok(Math.abs(at(1) - 4) < 1e-12);
 });
 
 test('spline: monotone — never overshoots the band its nodes span', () => {
@@ -354,9 +354,11 @@ test('metaMultiplier: node graph drives playback; speedMode picks interpolation'
     { phase: 1, multiplier: 1 },
   ];
   // Linear vs PCHIP differ mid-segment on the same nodes (with 2 nodes PCHIP
-  // degenerates to the same straight line, so use 3).
-  const linear = metaMultiplier({ speedMode: 'flat', curveNodes: nodes, loopSeam: 'hard' });
-  const curved = metaMultiplier({ speedMode: 'curve', curveNodes: nodes, loopSeam: 'hard' });
+  // degenerates to the same straight line, so use 3). roundTrip span: this
+  // test reads the curve by cycle-phase directly.
+  const rt = { loopSeam: 'hard', graphSpan: 'roundTrip' } as const;
+  const linear = metaMultiplier({ speedMode: 'flat', curveNodes: nodes, ...rt });
+  const curved = metaMultiplier({ speedMode: 'curve', curveNodes: nodes, ...rt });
   assert.ok(Math.abs(linear(0.25) - 2) < 1e-12); // log-lerp midpoint of 1×→4×
   assert.ok(Math.abs(curved(0.25) - 2 ** 1.25) < 1e-12); // PCHIP hand value
   assert.equal(linear(0.5), curved(0.5)); // both pass through the nodes
@@ -391,4 +393,69 @@ test('integration through a curve: fast half / slow half take asymmetric time', 
   // around the step, so allow a loose band — the asymmetry is the point.
   assert.ok(msToHalf > 800 && msToHalf < 1400, `fast half took ${msToHalf}ms`);
   assert.ok(msToWrap > 3200 && msToWrap < 4400, `slow half took ${msToWrap}ms`);
+});
+
+/* ---- Slider-Anim-M4: graphSpan — positional x-axis ---- */
+
+test('oneWay: the return leg retraces the same curve in reverse', () => {
+  // Asymmetric curve so cycle-phase and value-position lookups differ.
+  const nodes: CurveNode[] = [
+    { phase: 0, multiplier: 1 },
+    { phase: 0.3, multiplier: 4 },
+    { phase: 1, multiplier: 1 },
+  ];
+  const oneWay = metaMultiplier({ speedMode: 'flat', curveNodes: nodes, graphSpan: 'oneWay' });
+  const roundTrip = metaMultiplier({
+    speedMode: 'flat',
+    curveNodes: nodes,
+    loopSeam: 'hard',
+    graphSpan: 'roundTrip',
+  });
+  // Same position on the way up (phase 0.2 → tri 0.4) and the way back
+  // (phase 0.8 → tri 0.4): oneWay reads the same speed, roundTrip doesn't.
+  assert.ok(Math.abs(oneWay(0.2) - oneWay(0.8)) < 1e-12);
+  assert.ok(Math.abs(roundTrip(0.2) - roundTrip(0.8)) > 0.1);
+  // At the max turnaround (phase 0.5 → position 1) oneWay reads the END
+  // anchor — the speed at max — not the cycle midpoint.
+  assert.ok(Math.abs(oneWay(0.5) - 1) < 1e-12);
+  // Hand value: position 0.15 is the log-lerp midpoint of the 1×→4× segment.
+  assert.ok(Math.abs(oneWay(0.075) - 2) < 1e-12);
+});
+
+test('oneWay ignores the seam lock — anchors are speeds at min and max', () => {
+  const nodes: CurveNode[] = [
+    { phase: 0, multiplier: 1 },
+    { phase: 1, multiplier: 4 },
+  ];
+  // Even with loopSeam 'smooth' stored, the end anchor keeps its own value
+  // (4× at max) instead of being locked onto node 0.
+  const at = metaMultiplier({
+    speedMode: 'flat',
+    curveNodes: nodes,
+    loopSeam: 'smooth',
+    graphSpan: 'oneWay',
+  });
+  assert.ok(Math.abs(at(0.5) - 4) < 1e-12); // position 1 = max
+  // …and speed is continuous through the wrap by construction.
+  assert.ok(Math.abs(at(0.999) - at(0.001)) < 0.01);
+});
+
+test('graphSpan defaults to oneWay; roundTrip preserves M3 cycle semantics', () => {
+  const nodes: CurveNode[] = [
+    { phase: 0, multiplier: 1 },
+    { phase: 0.3, multiplier: 4 },
+    { phase: 1, multiplier: 1 },
+  ];
+  const defaulted = metaMultiplier({ speedMode: 'flat', curveNodes: nodes });
+  const oneWay = metaMultiplier({ speedMode: 'flat', curveNodes: nodes, graphSpan: 'oneWay' });
+  for (const p of [0.1, 0.4, 0.8]) assert.equal(defaulted(p), oneWay(p));
+  // roundTrip reads the curve by cycle-phase directly (the M3 behavior).
+  const rt = metaMultiplier({
+    speedMode: 'flat',
+    curveNodes: nodes,
+    loopSeam: 'hard',
+    graphSpan: 'roundTrip',
+  });
+  const direct = prepareCurve(nodes, 'hard', 'flat');
+  for (const p of [0.1, 0.4, 0.8]) assert.equal(rt(p), direct(p));
 });

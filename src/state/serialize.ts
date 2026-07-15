@@ -122,6 +122,7 @@ function serializeItem(item: Item): SerializedItem {
         slider.curveNodes = s.curveNodes.map((n) => ({ phase: n.phase, multiplier: n.multiplier }));
       }
       if (s.loopSeam !== undefined) slider.loopSeam = s.loopSeam;
+      if (s.graphSpan !== undefined) slider.graphSpan = s.graphSpan;
       out.slider = slider;
     }
     return out;
@@ -248,6 +249,12 @@ function parseSlider(v: unknown, path: string): SliderMeta {
     }
     out.loopSeam = v.loopSeam;
   }
+  if (v.graphSpan !== undefined) {
+    if (v.graphSpan !== 'oneWay' && v.graphSpan !== 'roundTrip') {
+      throw new NousFormatError('expected "oneWay" or "roundTrip"', `${path}.graphSpan`);
+    }
+    out.graphSpan = v.graphSpan;
+  }
   // Normalize to the M3 node model: legacy curves gain their end anchor
   // (rules that reproduce the old playback), and legacy flat speeds — or a
   // speedMode with no nodes at all — seed a constant two-anchor line. Plain
@@ -256,6 +263,12 @@ function parseSlider(v: unknown, path: string): SliderMeta {
     out.curveNodes = normalizedCurveNodes(out);
   } else if (legacySpeed !== undefined || out.speedMode !== undefined) {
     out.curveNodes = defaultCurveNodes(legacySpeed ?? 1);
+  }
+  // Span-less curves are legacy (pre-M4), authored against the full-cycle
+  // x-axis — pin them to 'roundTrip'. New sliders default to 'oneWay' and the
+  // editor stamps the span on every edit, so this only fires for old files.
+  if (out.curveNodes !== undefined && out.graphSpan === undefined) {
+    out.graphSpan = 'roundTrip';
   }
   return out;
 }

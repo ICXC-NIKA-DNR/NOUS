@@ -39,6 +39,7 @@ function complexDocument(): GcalcDocument {
       { phase: 1, multiplier: 1 },
     ],
     loopSeam: 'hard',
+    graphSpan: 'roundTrip',
   });
   const hidden = makeExpression('y = a x^2');
   hidden.visible = false;
@@ -295,6 +296,21 @@ test('legacy M1/M2 sliders normalize to the anchored node model (Slider-Anim-M3)
   }))).doc));
   const json = documentToJson(once.doc);
   assert.equal(documentToJson(parseNousJson(json).doc), json);
+});
+
+test('graphSpan is validated; span-less curves pin to roundTrip (Slider-Anim-M4)', () => {
+  const base = { min: 0, max: 5, step: 1 };
+  const nodes = [
+    { phase: 0, multiplier: 1 },
+    { phase: 1, multiplier: 4 },
+  ];
+  assertRejects(withAnim({ ...base, graphSpan: 'diagonal', curveNodes: nodes }), 'items[0].slider.graphSpan');
+  // Legacy (pre-M4) curve without a span: authored full-cycle → roundTrip.
+  assert.equal(loadSlider({ ...base, curveNodes: nodes }).graphSpan, 'roundTrip');
+  // An explicit span survives as written.
+  assert.equal(loadSlider({ ...base, graphSpan: 'oneWay', curveNodes: nodes }).graphSpan, 'oneWay');
+  // No curve, no span: nothing materializes.
+  assert.equal(loadSlider({ ...base }).graphSpan, undefined);
 });
 
 /* ---- hostile input: depth caps and numeric bounds (M10 security pass) ---- */

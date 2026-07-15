@@ -22,6 +22,7 @@ import {
   prepareCurve,
   removeCurveNode,
   type CurveNode,
+  type GraphSpan,
   type LoopSeam,
   type SpeedMode,
 } from '../state/sliderAnim.ts';
@@ -40,8 +41,13 @@ export interface SliderMeta {
   /** Speed-ramp control points, sorted by phase; anchors at phase 0 and 1. */
   curveNodes?: CurveNode[];
   /** Cycle-boundary behavior: 'smooth' locks the anchors' y together
-   * (continuous speed across cycles); 'hard' lets them differ (speed pop). */
+   * (continuous speed across cycles); 'hard' lets them differ (speed pop).
+   * Only meaningful under graphSpan 'roundTrip'. */
   loopSeam?: LoopSeam;
+  /** What the curve's x-axis depicts (Slider-Anim-M4): one min→max traversal
+   * ('oneWay', default — the return retraces in reverse) or the full
+   * min→max→min cycle ('roundTrip'). Legacy curves load as 'roundTrip'. */
+  graphSpan?: GraphSpan;
 }
 
 export interface ExpressionEntry {
@@ -158,19 +164,27 @@ function SpeedCurveEditor({
   const nodes = normalizedCurveNodes(meta);
   const seam: LoopSeam = meta.loopSeam ?? 'smooth';
   const mode: SpeedMode = meta.speedMode ?? 'flat';
+  const span: GraphSpan = meta.graphSpan ?? 'oneWay';
+  // Under 'oneWay' the anchors are speeds at min and max — independent by
+  // nature — so the seam lock (and its toggle) only exists for 'roundTrip'.
+  const effectiveSeam: LoopSeam = span === 'oneWay' ? 'hard' : seam;
   const svgRef = useRef<SVGSVGElement>(null);
   const dragIndex = useRef<number | null>(null);
-  const setNodes = (next: CurveNode[]): void => onMeta({ ...meta, curveNodes: next });
+  // Every edit stamps graphSpan alongside the nodes: the load-normalizer
+  // treats span-less curves as legacy 'roundTrip', so a curve authored under
+  // the 'oneWay' default must say so explicitly to survive a reload.
+  const setNodes = (next: CurveNode[]): void =>
+    onMeta({ ...meta, graphSpan: span, curveNodes: next });
 
   const path = useMemo(() => {
-    const at = prepareCurve(nodes, seam, mode);
+    const at = prepareCurve(nodes, effectiveSeam, mode);
     const pts: string[] = [];
     for (let i = 0; i <= 64; i++) {
       const p = i / 64;
       pts.push(`${i === 0 ? 'M' : 'L'}${curveX(p).toFixed(1)},${curveY(at(p)).toFixed(1)}`);
     }
     return pts.join(' ');
-  }, [nodes, seam, mode]);
+  }, [nodes, effectiveSeam, mode]);
 
   const dragTo = (i: number, e: React.PointerEvent): void => {
     // The SVG is CSS-sized to the sidebar; map client px back into viewBox px.
@@ -181,7 +195,7 @@ function SpeedCurveEditor({
     const ly = 2 - (4 * (vy - CURVE_PAD)) / (CURVE_H - 2 * CURVE_PAD);
     // Clamps: anchors pin to x 0/1 (smooth also y-locks them together),
     // middles stay between their neighbors, y stays in the speed range.
-    setNodes(moveCurveNode(nodes, i, phase, 2 ** ly, seam));
+    setNodes(moveCurveNode(nodes, i, phase, 2 ** ly, effectiveSeam));
   };
 
   return (
@@ -205,38 +219,59 @@ function SpeedCurveEditor({
             curve
           </button>
         </div>
-        <div className="angle-toggle" role="group" aria-label="Loop seam">
+        <div className="angle-toggle" role="group" aria-label="Graph span">
           <button
             type="button"
-            aria-pressed={seam === 'smooth'}
-            title="Start and end anchors locked together — speed flows continuously across cycles"
-            onClick={() =>
-              // Entering smooth mode snaps the end anchor onto node 0 in the
-              // data (moveCurveNode's anchor-sync does exactly that).
-              onMeta({
-                ...meta,
-                loopSeam: 'smooth',
-                curveNodes: moveCurveNode(nodes, 0, 0, nodes[0].multiplier, 'smooth'),
-              })
-            }
+            aria-pressed={span === 'oneWay'}
+            title="X-axis is one min→max traversal; the return retraces it in reverse"
+            onClick={() => onMeta({ ...meta, graphSpan: 'oneWay', curveNodes: nodes })}
           >
-            smooth
+            one-way
           </button>
           <button
             type="button"
-            aria-pressed={seam === 'hard'}
-            title="Anchors move independently — speed pops at the cycle restart"
-            onClick={() => onMeta({ ...meta, loopSeam: 'hard', curveNodes: nodes })}
+            aria-pressed={span === 'roundTrip'}
+            title="X-axis is the entire min→max→min cycle, forward and back drawn explicitly"
+            onClick={() => onMeta({ ...meta, graphSpan: 'roundTrip', curveNodes: nodes })}
           >
-            hard
+            round-trip
           </button>
         </div>
+        {span === 'roundTrip' && (
+          <div className="angle-toggle" role="group" aria-label="Loop seam">
+            <button
+              type="button"
+              aria-pressed={seam === 'smooth'}
+              title="Start and end anchors locked together — speed flows continuously across cycles"
+              onClick={() =>
+                // Entering smooth mode snaps the end anchor onto node 0 in
+                // the data (moveCurveNode's anchor-sync does exactly that).
+                onMeta({
+                  ...meta,
+                  graphSpan: span,
+                  loopSeam: 'smooth',
+                  curveNodes: moveCurveNode(nodes, 0, 0, nodes[0].multiplier, 'smooth'),
+                })
+              }
+            >
+              smooth
+            </button>
+            <button
+              type="button"
+              aria-pressed={seam === 'hard'}
+              title="Anchors move independently — speed pops at the cycle restart"
+              onClick={() => onMeta({ ...meta, graphSpan: span, loopSeam: 'hard', curveNodes: nodes })}
+            >
+              hard
+            </button>
+          </div>
+        )}
         <button
           type="button"
           className="curve-node-btn"
           aria-label="Add curve node"
           disabled={nodes.length >= MAX_CURVE_NODES}
-          onClick={() => setNodes(addCurveNode(nodes, seam, mode))}
+          onClick={() => setNodes(addCurveNode(nodes, effectiveSeam, mode))}
         >
           +
         </button>
@@ -271,6 +306,14 @@ function SpeedCurveEditor({
             </text>
           </g>
         ))}
+        <text
+          className="speed-curve-label axis"
+          x={CURVE_W / 2}
+          y={CURVE_H - 2}
+          textAnchor="middle"
+        >
+          {span === 'oneWay' ? 'min → max (returns in reverse)' : 'min → max → min'}
+        </text>
         <path className="speed-curve-path" d={path} />
         {nodes.map((node, i) => (
           <circle

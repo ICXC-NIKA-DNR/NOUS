@@ -106,6 +106,15 @@ export type LoopSeam = 'smooth' | 'hard';
 /** Interpolation between nodes: straight segments ('flat') or PCHIP ('curve'). */
 export type SpeedMode = 'flat' | 'curve';
 
+/** What the graph's x-axis depicts (Slider-Anim-M4):
+ *  'oneWay'    — a single min→max traversal by value-position; the return
+ *                leg automatically retraces the same curve in reverse.
+ *  'roundTrip' — the entire min→max→min cycle explicitly; forward and back
+ *                are both drawn, no retracing.
+ * Default 'oneWay' for new sliders; legacy (pre-M4) curves were authored
+ * against the full cycle and normalize to 'roundTrip' on load. */
+export type GraphSpan = 'oneWay' | 'roundTrip';
+
 export const MAX_CURVE_NODES = 5;
 
 /** Minimum phase gap enforced between neighboring nodes (and the cycle end),
@@ -178,7 +187,10 @@ export function prepareCurve(
     }
   }
   return (phase: number): number => {
-    const p = Math.min(1, Math.max(0, phase - Math.floor(phase)));
+    // Clamp, don't wrap: the domain is positional (phase 1 = the end anchor,
+    // which matters for the oneWay max turnaround). Playback keeps phase in
+    // [0, 1) via advancePhase, so this only guards out-of-range callers.
+    const p = Math.min(1, Math.max(0, phase));
     let i = 0;
     while (i < n - 2 && p > xs[i + 1]) i++;
     const t = (p - xs[i]) / h[i];
@@ -296,12 +308,24 @@ export function moveCurveNode(
 }
 
 /** The per-frame multiplier source for a slider: its node graph, linear or
- * PCHIP per speedMode. Metas with no nodes (fresh sliders) run at 1×. */
+ * PCHIP per speedMode, read by cycle-phase or by value-position per
+ * graphSpan. Metas with no nodes (fresh sliders) run at 1×. */
 export function metaMultiplier(meta: {
   speedMode?: SpeedMode;
   curveNodes?: CurveNode[];
   loopSeam?: LoopSeam;
+  graphSpan?: GraphSpan;
 }): (phase: number) => number {
   if (meta.curveNodes === undefined || meta.curveNodes.length === 0) return () => 1;
-  return prepareCurve(meta.curveNodes, meta.loopSeam ?? 'smooth', meta.speedMode ?? 'flat');
+  const mode = meta.speedMode ?? 'flat';
+  if ((meta.graphSpan ?? 'oneWay') === 'roundTrip') {
+    return prepareCurve(meta.curveNodes, meta.loopSeam ?? 'smooth', mode);
+  }
+  // oneWay: the curve's x-axis is value-position within min→max, so the
+  // return leg reads the same curve in reverse through the triangle map.
+  // The anchors are speeds at min and max — independent by nature — so the
+  // seam lock never applies ('hard' endpoints); speed is automatically
+  // continuous at both turnarounds because the retrace reflects through them.
+  const at = prepareCurve(meta.curveNodes, 'hard', mode);
+  return (phase: number): number => at(trianglePosition(phase));
 }
