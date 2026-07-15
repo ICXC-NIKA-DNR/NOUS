@@ -9,6 +9,7 @@ import {
   advancePhase,
   BASE_CYCLE_MS,
   clampSpeed,
+  cycleDurationMs,
   defaultCurveNodes,
   formatSliderValue,
   MAX_CURVE_NODES,
@@ -463,4 +464,82 @@ test('graphSpan defaults to oneWay; roundTrip preserves M3 cycle semantics', () 
   });
   const direct = prepareCurve(nodes, 'hard', 'flat');
   for (const p of [0.1, 0.4, 0.8]) assert.equal(rt(p), direct(p));
+});
+
+/* ---- Slider-Anim-M5: loop vs bounce ---- */
+
+test('loop position mapping: sawtooth min→max, jump at the wrap', () => {
+  assert.equal(sliderValueAt(0, -10, 10, 'loop'), -10);
+  assert.equal(sliderValueAt(0.5, -10, 10, 'loop'), 0); // halfway UP, not at max
+  assert.ok(Math.abs(sliderValueAt(0.999, -10, 10, 'loop') - 9.98) < 1e-9);
+  // The wrap jumps back to min — no return leg.
+  assert.equal(sliderValueAt(1, -10, 10, 'loop'), -10);
+  // Bounce at the same phases is unchanged by the new parameter's existence.
+  assert.equal(sliderValueAt(0.5, -10, 10), 10);
+  assert.equal(sliderValueAt(0.5, -10, 10, 'bounce'), 10);
+});
+
+test('phaseFromValue inverts the loop mapping across the whole range', () => {
+  for (const v of [-10, -3.5, 0, 7.25]) {
+    const phase = phaseFromValue(v, -10, 10, 'loop');
+    assert.ok(phase >= 0 && phase < 1);
+    assert.ok(Math.abs(sliderValueAt(phase, -10, 10, 'loop') - v) < 1e-12);
+  }
+  // The max is the jump point: its phase is 1, which the sawtooth has
+  // already wrapped to min — resuming at max means the jump comes first.
+  assert.equal(phaseFromValue(10, -10, 10, 'loop'), 1);
+  assert.equal(sliderValueAt(1, -10, 10, 'loop'), -10);
+  assert.equal(phaseFromValue(3, 5, 5, 'loop'), 0); // degenerate range
+});
+
+test('loop cycle = one leg (4s at 1×), so mode switching is not a hidden 2×', () => {
+  assert.equal(cycleDurationMs('bounce'), BASE_CYCLE_MS);
+  assert.equal(cycleDurationMs('loop'), BASE_CYCLE_MS / 2);
+  // 1000 ms at 1×: bounce covers 1/8 cycle, loop covers 1/4 — but both have
+  // moved the SAME distance along the range (bounce leg = half its cycle).
+  let bounce = 0;
+  let loop = 0;
+  for (let i = 0; i < 60; i++) {
+    bounce = advancePhase(bounce, 1000 / 60, () => 1, cycleDurationMs('bounce'));
+    loop = advancePhase(loop, 1000 / 60, () => 1, cycleDurationMs('loop'));
+  }
+  const bounceDist = sliderValueAt(bounce, 0, 1) - 0;
+  const loopDist = sliderValueAt(loop, 0, 1, 'loop') - 0;
+  assert.ok(Math.abs(bounceDist - loopDist) < 1e-9);
+});
+
+test('metaMultiplier under loop: positional lookup with the seam at the jump', () => {
+  const nodes: CurveNode[] = [
+    { phase: 0, multiplier: 1 },
+    { phase: 1, multiplier: 4 }, // anchors deliberately unequal
+  ];
+  // Hard seam: speed ramps to 4× at max, then pops back to 1× at the jump.
+  const hard = metaMultiplier({
+    speedMode: 'flat',
+    curveNodes: nodes,
+    loopSeam: 'hard',
+    animMode: 'loop',
+  });
+  assert.ok(Math.abs(hard(0.999) - 4) < 0.01);
+  assert.equal(hard(0), 1);
+  // Smooth seam (default): the anchor lock keeps the jump speed-continuous.
+  const smooth = metaMultiplier({ speedMode: 'flat', curveNodes: nodes, animMode: 'loop' });
+  assert.ok(Math.abs(smooth(0.999) - smooth(0.001)) < 0.01);
+});
+
+test('bounce playback is byte-identical with animMode absent or explicit', () => {
+  const nodes: CurveNode[] = [
+    { phase: 0, multiplier: 1 },
+    { phase: 0.3, multiplier: 4 },
+    { phase: 1, multiplier: 0.5 },
+  ];
+  for (const speedMode of ['flat', 'curve'] as const) {
+    const implicit = metaMultiplier({ speedMode, curveNodes: nodes, loopSeam: 'hard' });
+    const explicit = metaMultiplier({ speedMode, curveNodes: nodes, loopSeam: 'hard', animMode: 'bounce' });
+    for (let i = 0; i <= 40; i++) assert.equal(implicit(i / 40), explicit(i / 40));
+  }
+  for (const p of [0, 0.3, 0.7]) {
+    assert.equal(sliderValueAt(p, -5, 5), sliderValueAt(p, -5, 5, 'bounce'));
+    assert.equal(phaseFromValue(p * 10 - 5, -5, 5), phaseFromValue(p * 10 - 5, -5, 5, 'bounce'));
+  }
 });

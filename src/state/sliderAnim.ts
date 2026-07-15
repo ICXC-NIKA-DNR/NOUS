@@ -10,8 +10,21 @@
 // multiplier (Slider-Anim-M2 speed curves) integrates correctly over real
 // elapsed time — position over time is NOT a closed form once speed varies.
 
-/** Full min→max→min cycle duration at 1× speed. */
+/** Full min→max→min bounce cycle duration at 1× speed. */
 export const BASE_CYCLE_MS = 8000;
+
+/** How the slider travels (Slider-Anim-M5):
+ *  'bounce' — min→max→min triangle wave, direction reverses at both ends.
+ *  'loop'   — min→max sawtooth, then jumps back to min and replays forward.
+ * Default 'bounce' (the original M1 behavior). */
+export type AnimMode = 'bounce' | 'loop';
+
+/** One cycle's duration at 1×: bounce = the full 8s round trip; loop = 4s,
+ * matching ONE bounce leg — so switching modes never feels like a hidden 2×
+ * speed change (maintainer decision, M5). */
+export function cycleDurationMs(mode: AnimMode): number {
+  return mode === 'loop' ? BASE_CYCLE_MS / 2 : BASE_CYCLE_MS;
+}
 
 /** Speed multiplier bounds. The range is log-centered on 1× (√(0.25·4) = 1),
  * which is also why the M2 curve editor's y-axis is log-scaled. */
@@ -32,30 +45,44 @@ export function trianglePosition(phase: number): number {
   return p < 0.5 ? 2 * p : 2 - 2 * p;
 }
 
-export function sliderValueAt(phase: number, min: number, max: number): number {
+export function sliderValueAt(
+  phase: number,
+  min: number,
+  max: number,
+  mode: AnimMode = 'bounce',
+): number {
   if (!(max > min)) return min;
-  return min + (max - min) * trianglePosition(phase);
+  const f = mode === 'loop' ? phase - Math.floor(phase) : trianglePosition(phase);
+  return min + (max - min) * f;
 }
 
 /** Inverse of sliderValueAt on the ascending branch: the phase to resume from
- * so pressing ▶ continues from the slider's current position. */
-export function phaseFromValue(value: number, min: number, max: number): number {
+ * so pressing ▶ continues from the slider's current position. (Loop only has
+ * an ascending branch, so its inverse is the position itself.) */
+export function phaseFromValue(
+  value: number,
+  min: number,
+  max: number,
+  mode: AnimMode = 'bounce',
+): number {
   if (!(max > min)) return 0;
   const f = Math.min(1, Math.max(0, (value - min) / (max - min)));
-  return f / 2;
+  return mode === 'loop' ? f : f / 2;
 }
 
 /** One Euler step: advance phase by elapsed real time × the instantaneous
  * multiplier at the current phase, wrapping at 1. `multiplierAt` is a
- * constant for flat speed or the M2 spline; its result is clamped to the
- * legal speed range either way. */
+ * constant for flat speed or the speed curve; its result is clamped to the
+ * legal speed range either way. `cycleMs` is the mode's 1× cycle duration
+ * (cycleDurationMs — bounce round trip or loop leg). */
 export function advancePhase(
   phase: number,
   deltaMs: number,
   multiplierAt: (phase: number) => number,
+  cycleMs: number = BASE_CYCLE_MS,
 ): number {
   const dt = Math.min(Math.max(deltaMs, 0), MAX_FRAME_DELTA_MS);
-  const next = phase + (dt / BASE_CYCLE_MS) * clampSpeed(multiplierAt(phase));
+  const next = phase + (dt / cycleMs) * clampSpeed(multiplierAt(phase));
   return next - Math.floor(next);
 }
 
@@ -309,15 +336,24 @@ export function moveCurveNode(
 
 /** The per-frame multiplier source for a slider: its node graph, linear or
  * PCHIP per speedMode, read by cycle-phase or by value-position per
- * graphSpan. Metas with no nodes (fresh sliders) run at 1×. */
+ * graphSpan/animMode. Metas with no nodes (fresh sliders) run at 1×. */
 export function metaMultiplier(meta: {
   speedMode?: SpeedMode;
   curveNodes?: CurveNode[];
   loopSeam?: LoopSeam;
   graphSpan?: GraphSpan;
+  animMode?: AnimMode;
 }): (phase: number) => number {
   if (meta.curveNodes === undefined || meta.curveNodes.length === 0) return () => 1;
   const mode = meta.speedMode ?? 'flat';
+  if ((meta.animMode ?? 'bounce') === 'loop') {
+    // Loop travels min→max only, so position ≡ phase and the (oneWay)
+    // positional lookup is the identity. roundTrip is pair-gated out under
+    // loop (UI + parse normalization force oneWay); a stray combination
+    // lands here too, read positionally. The seam decides whether the jump
+    // back to min pops: 'smooth' locks curve(1) = curve(0).
+    return prepareCurve(meta.curveNodes, meta.loopSeam ?? 'smooth', mode);
+  }
   if ((meta.graphSpan ?? 'oneWay') === 'roundTrip') {
     return prepareCurve(meta.curveNodes, meta.loopSeam ?? 'smooth', mode);
   }

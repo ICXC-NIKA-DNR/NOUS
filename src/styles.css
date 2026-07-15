@@ -475,6 +475,11 @@ body {
   color: var(--text);
 }
 
+.angle-toggle button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
 .expr-list {
   flex: 1;
 }

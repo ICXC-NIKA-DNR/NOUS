@@ -21,6 +21,7 @@ import {
   normalizedCurveNodes,
   prepareCurve,
   removeCurveNode,
+  type AnimMode,
   type CurveNode,
   type GraphSpan,
   type LoopSeam,
@@ -48,6 +49,10 @@ export interface SliderMeta {
    * ('oneWay', default — the return retraces in reverse) or the full
    * min→max→min cycle ('roundTrip'). Legacy curves load as 'roundTrip'. */
   graphSpan?: GraphSpan;
+  /** How the slider travels (Slider-Anim-M5): 'bounce' (default, min→max→min)
+   * or 'loop' (min→max, jump back, replay forward — one leg = 4s at 1×).
+   * roundTrip is pair-gated to bounce: switching to loop forces oneWay. */
+  animMode?: AnimMode;
 }
 
 export interface ExpressionEntry {
@@ -165,6 +170,7 @@ function SpeedCurveEditor({
   const seam: LoopSeam = meta.loopSeam ?? 'smooth';
   const mode: SpeedMode = meta.speedMode ?? 'flat';
   const span: GraphSpan = meta.graphSpan ?? 'oneWay';
+  const anim: AnimMode = meta.animMode ?? 'bounce';
   const svgRef = useRef<SVGSVGElement>(null);
   const dragIndex = useRef<number | null>(null);
   // Every edit stamps graphSpan alongside the nodes: the load-normalizer
@@ -216,6 +222,29 @@ function SpeedCurveEditor({
             curve
           </button>
         </div>
+        <div className="angle-toggle" role="group" aria-label="Animation mode">
+          <button
+            type="button"
+            aria-pressed={anim === 'bounce'}
+            title="min→max→min — direction reverses at both ends"
+            onClick={() => onMeta({ ...meta, animMode: 'bounce', graphSpan: span, curveNodes: nodes })}
+          >
+            bounce
+          </button>
+          <button
+            type="button"
+            aria-pressed={anim === 'loop'}
+            title="min→max, jump back to min, replay forward (one leg = a bounce leg at 1×)"
+            onClick={() =>
+              // Pair-gate: roundTrip has no meaning without a return leg, so
+              // entering loop forces the span to oneWay — visibly, the span
+              // toggle flips (maintainer decision, M5).
+              onMeta({ ...meta, animMode: 'loop', graphSpan: 'oneWay', curveNodes: nodes })
+            }
+          >
+            loop
+          </button>
+        </div>
         <div className="angle-toggle" role="group" aria-label="Graph span">
           <button
             type="button"
@@ -228,7 +257,12 @@ function SpeedCurveEditor({
           <button
             type="button"
             aria-pressed={span === 'roundTrip'}
-            title="X-axis is the entire min→max→min cycle, forward and back drawn explicitly"
+            disabled={anim === 'loop'}
+            title={
+              anim === 'loop'
+                ? 'round-trip needs bounce — loop has no return leg'
+                : 'X-axis is the entire min→max→min cycle, forward and back drawn explicitly'
+            }
             onClick={() => onMeta({ ...meta, graphSpan: 'roundTrip', curveNodes: nodes })}
           >
             round-trip
@@ -307,7 +341,11 @@ function SpeedCurveEditor({
           y={CURVE_H - 2}
           textAnchor="middle"
         >
-          {span === 'oneWay' ? 'min → max (returns in reverse)' : 'min → max → min'}
+          {span === 'roundTrip'
+            ? 'min → max → min'
+            : anim === 'loop'
+              ? 'min → max (jumps back to start)'
+              : 'min → max (returns in reverse)'}
         </text>
         <path className="speed-curve-path" d={path} />
         {nodes.map((node, i) => (

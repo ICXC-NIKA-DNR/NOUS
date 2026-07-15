@@ -123,6 +123,7 @@ function serializeItem(item: Item): SerializedItem {
       }
       if (s.loopSeam !== undefined) slider.loopSeam = s.loopSeam;
       if (s.graphSpan !== undefined) slider.graphSpan = s.graphSpan;
+      if (s.animMode !== undefined) slider.animMode = s.animMode;
       out.slider = slider;
     }
     return out;
@@ -255,6 +256,12 @@ function parseSlider(v: unknown, path: string): SliderMeta {
     }
     out.graphSpan = v.graphSpan;
   }
+  if (v.animMode !== undefined) {
+    if (v.animMode !== 'bounce' && v.animMode !== 'loop') {
+      throw new NousFormatError('expected "bounce" or "loop"', `${path}.animMode`);
+    }
+    out.animMode = v.animMode;
+  }
   // Normalize to the M3 node model: legacy curves gain their end anchor
   // (rules that reproduce the old playback), and legacy flat speeds — or a
   // speedMode with no nodes at all — seed a constant two-anchor line. Plain
@@ -269,6 +276,12 @@ function parseSlider(v: unknown, path: string): SliderMeta {
   // editor stamps the span on every edit, so this only fires for old files.
   if (out.curveNodes !== undefined && out.graphSpan === undefined) {
     out.graphSpan = 'roundTrip';
+  }
+  // Pair-gate (M5): roundTrip has no meaning without a return leg. The UI
+  // can't produce loop+roundTrip; hand-edited files get the same forcing the
+  // animMode toggle applies.
+  if (out.animMode === 'loop' && out.graphSpan === 'roundTrip') {
+    out.graphSpan = 'oneWay';
   }
   return out;
 }

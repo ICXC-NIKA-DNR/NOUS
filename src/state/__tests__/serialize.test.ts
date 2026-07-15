@@ -379,3 +379,23 @@ test('rejects truncated and corrupted share codes without side effects', () => {
   // Valid base64 of garbage bytes → still a structured error.
   assert.throws(() => decodeShareCode('AAECAwQ='), NousFormatError);
 });
+
+test('animMode is validated; loop+roundTrip in a file is pair-gated to oneWay (Slider-Anim-M5)', () => {
+  const base = { min: 0, max: 5, step: 1 };
+  const nodes = [
+    { phase: 0, multiplier: 1 },
+    { phase: 1, multiplier: 4 },
+  ];
+  assertRejects(withAnim({ ...base, animMode: 'pingpong' }), 'items[0].slider.animMode');
+  // Round-trips as written.
+  assert.equal(loadSlider({ ...base, animMode: 'loop', curveNodes: nodes, graphSpan: 'oneWay' }).animMode, 'loop');
+  // Absent = bounce default; nothing materializes.
+  assert.equal(loadSlider({ ...base }).animMode, undefined);
+  // The disallowed combination normalizes the same way the UI forces it.
+  const gated = loadSlider({ ...base, animMode: 'loop', graphSpan: 'roundTrip', curveNodes: nodes });
+  assert.equal(gated.graphSpan, 'oneWay');
+  assert.equal(gated.animMode, 'loop');
+  // …and bounce+roundTrip is untouched.
+  const rt = loadSlider({ ...base, animMode: 'bounce', graphSpan: 'roundTrip', curveNodes: nodes });
+  assert.equal(rt.graphSpan, 'roundTrip');
+});

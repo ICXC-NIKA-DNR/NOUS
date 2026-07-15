@@ -26,10 +26,12 @@ import {
 } from './state/document.ts';
 import {
   advancePhase,
+  cycleDurationMs,
   formatSliderValue,
   metaMultiplier,
   phaseFromValue,
   sliderValueAt,
+  type AnimMode,
 } from './state/sliderAnim.ts';
 import { autosaveStore, installCleanExitMarker } from './platform/autosave.ts';
 import { errorLogPath, installErrorLog } from './platform/errorlog.ts';
@@ -445,8 +447,10 @@ export function App(): JSX.Element {
   /* ---- slider animation (Slider-Anim-M1): ▶ sliders sweep min→max→min ---- */
 
   // Phase per playing slider, transient (never persisted): pressing ▶ resumes
-  // from the row's current value via phaseFromValue; pausing forgets the phase.
-  const animPhases = useRef(new Map<number, number>());
+  // from the row's current value via phaseFromValue; pausing forgets the
+  // phase. Tagged with the animMode that produced it — a mid-play bounce↔loop
+  // switch re-derives from the current value so the slider doesn't jump.
+  const animPhases = useRef(new Map<number, { phase: number; mode: AnimMode }>());
   // The loop restarts only when the SET of playing sliders changes; per-frame
   // reads go through docRef/analysesRef so edits don't re-run the effect.
   const playingKey = useMemo(
@@ -479,15 +483,21 @@ export function App(): JSX.Element {
         if (!meta?.playing) continue;
         const name = definitionName(item.source);
         if (name === null) continue;
-        let phase = animPhases.current.get(item.id);
-        if (phase === undefined) {
+        const animMode = meta.animMode ?? 'bounce';
+        let entry = animPhases.current.get(item.id);
+        if (entry === undefined || entry.mode !== animMode) {
           const a = analysesRef.current.get(item.id);
-          const value = a?.kind === 'definition' ? a.value : meta.min;
-          phase = phaseFromValue(value, meta.min, meta.max);
+          const current = a?.kind === 'definition' ? a.value : meta.min;
+          entry = { phase: phaseFromValue(current, meta.min, meta.max, animMode), mode: animMode };
         }
-        phase = advancePhase(phase, delta, metaMultiplier(meta));
-        animPhases.current.set(item.id, phase);
-        const value = sliderValueAt(phase, meta.min, meta.max);
+        const phase = advancePhase(
+          entry.phase,
+          delta,
+          metaMultiplier(meta),
+          cycleDurationMs(animMode),
+        );
+        animPhases.current.set(item.id, { phase, mode: animMode });
+        const value = sliderValueAt(phase, meta.min, meta.max, animMode);
         edits.push({
           type: 'edit',
           id: item.id,
