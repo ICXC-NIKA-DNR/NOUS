@@ -24,6 +24,7 @@ import {
   type AnimMode,
   type CurveNode,
   type GraphSpan,
+  type LoopDirection,
   type LoopSeam,
   type SpeedMode,
 } from '../state/sliderAnim.ts';
@@ -53,6 +54,10 @@ export interface SliderMeta {
    * or 'loop' (min→max, jump back, replay forward — one leg = 4s at 1×).
    * roundTrip is pair-gated to bounce: switching to loop forces oneWay. */
   animMode?: AnimMode;
+  /** Loop traversal direction (Slider-Anim-M5.1): 'reverse' descends max→min
+   * and jumps back up to max. Ignored by bounce (kept stored for when the
+   * user switches back to loop). Default 'forward'. */
+  loopDirection?: LoopDirection;
 }
 
 export interface ExpressionEntry {
@@ -171,6 +176,7 @@ function SpeedCurveEditor({
   const mode: SpeedMode = meta.speedMode ?? 'flat';
   const span: GraphSpan = meta.graphSpan ?? 'oneWay';
   const anim: AnimMode = meta.animMode ?? 'bounce';
+  const loopDir: LoopDirection = meta.loopDirection ?? 'forward';
   const svgRef = useRef<SVGSVGElement>(null);
   const dragIndex = useRef<number | null>(null);
   // Every edit stamps graphSpan alongside the nodes: the load-normalizer
@@ -245,6 +251,28 @@ function SpeedCurveEditor({
             loop
           </button>
         </div>
+        <button
+          type="button"
+          className="curve-node-btn loop-reverse"
+          aria-pressed={loopDir === 'reverse'}
+          disabled={anim === 'bounce'}
+          title={
+            anim === 'bounce'
+              ? 'reverse applies to loop — bounce already travels both directions'
+              : loopDir === 'reverse'
+                ? 'looping max→min, jumping back up to max — click for forward'
+                : 'reverse the loop: max→min, jump back up to max'
+          }
+          onClick={() =>
+            onMeta({
+              ...meta,
+              loopDirection: loopDir === 'reverse' ? 'forward' : 'reverse',
+              curveNodes: nodes,
+            })
+          }
+        >
+          ◀ reverse
+        </button>
         <div className="angle-toggle" role="group" aria-label="Graph span">
           <button
             type="button"
@@ -344,7 +372,9 @@ function SpeedCurveEditor({
           {span === 'roundTrip'
             ? 'min → max → min'
             : anim === 'loop'
-              ? 'min → max (jumps back to start)'
+              ? loopDir === 'reverse'
+                ? 'max → min (jumps back to end)'
+                : 'min → max (jumps back to start)'
               : 'min → max (returns in reverse)'}
         </text>
         <path className="speed-curve-path" d={path} />

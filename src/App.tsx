@@ -32,6 +32,7 @@ import {
   phaseFromValue,
   sliderValueAt,
   type AnimMode,
+  type LoopDirection,
 } from './state/sliderAnim.ts';
 import { autosaveStore, installCleanExitMarker } from './platform/autosave.ts';
 import { errorLogPath, installErrorLog } from './platform/errorlog.ts';
@@ -448,9 +449,12 @@ export function App(): JSX.Element {
 
   // Phase per playing slider, transient (never persisted): pressing ▶ resumes
   // from the row's current value via phaseFromValue; pausing forgets the
-  // phase. Tagged with the animMode that produced it — a mid-play bounce↔loop
-  // switch re-derives from the current value so the slider doesn't jump.
-  const animPhases = useRef(new Map<number, { phase: number; mode: AnimMode }>());
+  // phase. Tagged with the animMode/direction that produced it — a mid-play
+  // bounce↔loop or forward↔reverse switch re-derives from the current value
+  // so the slider doesn't jump.
+  const animPhases = useRef(
+    new Map<number, { phase: number; mode: AnimMode; direction: LoopDirection }>(),
+  );
   // The loop restarts only when the SET of playing sliders changes; per-frame
   // reads go through docRef/analysesRef so edits don't re-run the effect.
   const playingKey = useMemo(
@@ -484,11 +488,16 @@ export function App(): JSX.Element {
         const name = definitionName(item.source);
         if (name === null) continue;
         const animMode = meta.animMode ?? 'bounce';
+        const direction = meta.loopDirection ?? 'forward';
         let entry = animPhases.current.get(item.id);
-        if (entry === undefined || entry.mode !== animMode) {
+        if (entry === undefined || entry.mode !== animMode || entry.direction !== direction) {
           const a = analysesRef.current.get(item.id);
           const current = a?.kind === 'definition' ? a.value : meta.min;
-          entry = { phase: phaseFromValue(current, meta.min, meta.max, animMode), mode: animMode };
+          entry = {
+            phase: phaseFromValue(current, meta.min, meta.max, animMode, direction),
+            mode: animMode,
+            direction,
+          };
         }
         const phase = advancePhase(
           entry.phase,
@@ -496,8 +505,8 @@ export function App(): JSX.Element {
           metaMultiplier(meta),
           cycleDurationMs(animMode),
         );
-        animPhases.current.set(item.id, { phase, mode: animMode });
-        const value = sliderValueAt(phase, meta.min, meta.max, animMode);
+        animPhases.current.set(item.id, { phase, mode: animMode, direction });
+        const value = sliderValueAt(phase, meta.min, meta.max, animMode, direction);
         edits.push({
           type: 'edit',
           id: item.id,

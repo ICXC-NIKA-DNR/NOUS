@@ -957,6 +957,11 @@ body {
   cursor: default;
 }
 
+.curve-node-btn[aria-pressed='true'] {
+  background: var(--bg-input);
+  color: var(--text);
+}
+
 .speed-curve {
   margin-top: 6px;
 }

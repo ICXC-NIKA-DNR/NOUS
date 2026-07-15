@@ -19,6 +19,11 @@ export const BASE_CYCLE_MS = 8000;
  * Default 'bounce' (the original M1 behavior). */
 export type AnimMode = 'bounce' | 'loop';
 
+/** Loop traversal direction (Slider-Anim-M5.1): 'reverse' descends max→min
+ * and jumps back up to max at the wrap. Loop-only — bounce already travels
+ * both directions, so it ignores this. Default 'forward'. */
+export type LoopDirection = 'forward' | 'reverse';
+
 /** One cycle's duration at 1×: bounce = the full 8s round trip; loop = 4s,
  * matching ONE bounce leg — so switching modes never feels like a hidden 2×
  * speed change (maintainer decision, M5). */
@@ -50,24 +55,30 @@ export function sliderValueAt(
   min: number,
   max: number,
   mode: AnimMode = 'bounce',
+  direction: LoopDirection = 'forward',
 ): number {
   if (!(max > min)) return min;
-  const f = mode === 'loop' ? phase - Math.floor(phase) : trianglePosition(phase);
+  const p = phase - Math.floor(phase);
+  const f =
+    mode === 'loop' ? (direction === 'reverse' ? 1 - p : p) : trianglePosition(phase);
   return min + (max - min) * f;
 }
 
-/** Inverse of sliderValueAt on the ascending branch: the phase to resume from
- * so pressing ▶ continues from the slider's current position. (Loop only has
- * an ascending branch, so its inverse is the position itself.) */
+/** Inverse of sliderValueAt on its traversal branch: the phase to resume
+ * from so pressing ▶ continues from the slider's current position. (Loop
+ * has one branch — ascending forward, descending in reverse — so the
+ * inverse is the position, or its mirror.) */
 export function phaseFromValue(
   value: number,
   min: number,
   max: number,
   mode: AnimMode = 'bounce',
+  direction: LoopDirection = 'forward',
 ): number {
   if (!(max > min)) return 0;
   const f = Math.min(1, Math.max(0, (value - min) / (max - min)));
-  return mode === 'loop' ? f : f / 2;
+  if (mode !== 'loop') return f / 2;
+  return direction === 'reverse' ? 1 - f : f;
 }
 
 /** One Euler step: advance phase by elapsed real time × the instantaneous
@@ -343,16 +354,23 @@ export function metaMultiplier(meta: {
   loopSeam?: LoopSeam;
   graphSpan?: GraphSpan;
   animMode?: AnimMode;
+  loopDirection?: LoopDirection;
 }): (phase: number) => number {
   if (meta.curveNodes === undefined || meta.curveNodes.length === 0) return () => 1;
   const mode = meta.speedMode ?? 'flat';
   if ((meta.animMode ?? 'bounce') === 'loop') {
-    // Loop travels min→max only, so position ≡ phase and the (oneWay)
-    // positional lookup is the identity. roundTrip is pair-gated out under
-    // loop (UI + parse normalization force oneWay); a stray combination
-    // lands here too, read positionally. The seam decides whether the jump
-    // back to min pops: 'smooth' locks curve(1) = curve(0).
-    return prepareCurve(meta.curveNodes, meta.loopSeam ?? 'smooth', mode);
+    // Loop travels one leg per cycle, so the (oneWay) positional lookup is
+    // position = phase (forward) or its mirror (reverse) — the curve's
+    // x-axis stays positional min→max either way, the slider just traverses
+    // it right-to-left in reverse. roundTrip is pair-gated out under loop
+    // (UI + parse normalization force oneWay); a stray combination lands
+    // here too, read positionally. The seam decides whether the wrap jump
+    // pops: 'smooth' locks curve(1) = curve(0).
+    const at = prepareCurve(meta.curveNodes, meta.loopSeam ?? 'smooth', mode);
+    if ((meta.loopDirection ?? 'forward') === 'reverse') {
+      return (phase: number): number => at(1 - (phase - Math.floor(phase)));
+    }
+    return at;
   }
   if ((meta.graphSpan ?? 'oneWay') === 'roundTrip') {
     return prepareCurve(meta.curveNodes, meta.loopSeam ?? 'smooth', mode);

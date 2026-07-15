@@ -399,3 +399,18 @@ test('animMode is validated; loop+roundTrip in a file is pair-gated to oneWay (S
   const rt = loadSlider({ ...base, animMode: 'bounce', graphSpan: 'roundTrip', curveNodes: nodes });
   assert.equal(rt.graphSpan, 'roundTrip');
 });
+
+test('loopDirection is validated and round-trips (Slider-Anim-M5.1)', () => {
+  const base = { min: 0, max: 5, step: 1 };
+  const nodes = [
+    { phase: 0, multiplier: 1 },
+    { phase: 1, multiplier: 4 },
+  ];
+  assertRejects(withAnim({ ...base, loopDirection: 'backwards' }), 'items[0].slider.loopDirection');
+  const rev = loadSlider({ ...base, animMode: 'loop', loopDirection: 'reverse', curveNodes: nodes, graphSpan: 'oneWay' });
+  assert.equal(rev.loopDirection, 'reverse');
+  // Absent = forward default; nothing materializes.
+  assert.equal(loadSlider({ ...base }).loopDirection, undefined);
+  // Stored-but-inactive under bounce is preserved (not stripped).
+  assert.equal(loadSlider({ ...base, animMode: 'bounce', loopDirection: 'reverse', curveNodes: nodes, graphSpan: 'oneWay' }).loopDirection, 'reverse');
+});

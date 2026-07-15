@@ -124,6 +124,7 @@ function serializeItem(item: Item): SerializedItem {
       if (s.loopSeam !== undefined) slider.loopSeam = s.loopSeam;
       if (s.graphSpan !== undefined) slider.graphSpan = s.graphSpan;
       if (s.animMode !== undefined) slider.animMode = s.animMode;
+      if (s.loopDirection !== undefined) slider.loopDirection = s.loopDirection;
       out.slider = slider;
     }
     return out;
@@ -261,6 +262,12 @@ function parseSlider(v: unknown, path: string): SliderMeta {
       throw new NousFormatError('expected "bounce" or "loop"', `${path}.animMode`);
     }
     out.animMode = v.animMode;
+  }
+  if (v.loopDirection !== undefined) {
+    if (v.loopDirection !== 'forward' && v.loopDirection !== 'reverse') {
+      throw new NousFormatError('expected "forward" or "reverse"', `${path}.loopDirection`);
+    }
+    out.loopDirection = v.loopDirection;
   }
   // Normalize to the M3 node model: legacy curves gain their end anchor
   // (rules that reproduce the old playback), and legacy flat speeds — or a

@@ -543,3 +543,87 @@ test('bounce playback is byte-identical with animMode absent or explicit', () =>
     assert.equal(phaseFromValue(p * 10 - 5, -5, 5), phaseFromValue(p * 10 - 5, -5, 5, 'bounce'));
   }
 });
+
+/* ---- Slider-Anim-M5.1: reverse loop ---- */
+
+test('reverse loop: descends max→min, jumps back up to max at the wrap', () => {
+  assert.equal(sliderValueAt(0, -10, 10, 'loop', 'reverse'), 10); // starts at max
+  assert.equal(sliderValueAt(0.5, -10, 10, 'loop', 'reverse'), 0);
+  assert.ok(Math.abs(sliderValueAt(0.999, -10, 10, 'loop', 'reverse') - -9.98) < 1e-9);
+  // The wrap jumps back to max — "going left, jump back to the end".
+  assert.equal(sliderValueAt(1, -10, 10, 'loop', 'reverse'), 10);
+  // Forward loop and bounce ignore the new parameter's existence.
+  assert.equal(sliderValueAt(0.25, -10, 10, 'loop'), sliderValueAt(0.25, -10, 10, 'loop', 'forward'));
+  assert.equal(sliderValueAt(0.25, -10, 10, 'bounce', 'reverse'), sliderValueAt(0.25, -10, 10));
+});
+
+test('phaseFromValue inverts the reverse-loop mapping; min is the jump point', () => {
+  for (const v of [-3.5, 0, 7.25, 10]) {
+    const phase = phaseFromValue(v, -10, 10, 'loop', 'reverse');
+    assert.ok(phase >= 0 && phase < 1);
+    assert.ok(Math.abs(sliderValueAt(phase, -10, 10, 'loop', 'reverse') - v) < 1e-12);
+  }
+  // Min mirrors forward-loop's max: phase 1, the jump comes first.
+  assert.equal(phaseFromValue(-10, -10, 10, 'loop', 'reverse'), 1);
+  assert.equal(sliderValueAt(1, -10, 10, 'loop', 'reverse'), 10);
+});
+
+test('reverse loop reads the speed curve positionally — same speed at the same value', () => {
+  const nodes: CurveNode[] = [
+    { phase: 0, multiplier: 1 },
+    { phase: 0.3, multiplier: 4 },
+    { phase: 1, multiplier: 0.5 },
+  ];
+  const fwd = metaMultiplier({
+    speedMode: 'flat', curveNodes: nodes, loopSeam: 'hard', animMode: 'loop',
+  });
+  const rev = metaMultiplier({
+    speedMode: 'flat', curveNodes: nodes, loopSeam: 'hard', animMode: 'loop', loopDirection: 'reverse',
+  });
+  // At any range position x: forward is there at phase x, reverse at 1−x.
+  for (const x of [0.1, 0.3, 0.5, 0.9]) {
+    assert.ok(Math.abs(fwd(x) - rev(1 - x)) < 1e-12, `position ${x}`);
+  }
+  // Reverse starts (phase 0) at the END anchor's speed — it's at max.
+  assert.ok(Math.abs(rev(0) - 0.5) < 1e-12);
+});
+
+test('reverse loop seam: smooth keeps the upward jump continuous, hard pops', () => {
+  const nodes: CurveNode[] = [
+    { phase: 0, multiplier: 1 },
+    { phase: 1, multiplier: 4 }, // anchors deliberately unequal
+  ];
+  // Hard: descending toward min the speed nears curve(0)=1×; after the jump
+  // to max it reads curve(1)=4× — the pop.
+  const hard = metaMultiplier({
+    speedMode: 'flat', curveNodes: nodes, loopSeam: 'hard', animMode: 'loop', loopDirection: 'reverse',
+  });
+  assert.ok(Math.abs(hard(0.999) - 1) < 0.01);
+  assert.ok(Math.abs(hard(0) - 4) < 1e-12);
+  // Smooth (default): the anchor lock makes the jump speed-continuous.
+  const smooth = metaMultiplier({
+    speedMode: 'flat', curveNodes: nodes, animMode: 'loop', loopDirection: 'reverse',
+  });
+  assert.ok(Math.abs(smooth(0.999) - smooth(0.001)) < 0.01);
+});
+
+test('playback is byte-identical with loopDirection absent or explicit forward', () => {
+  const nodes: CurveNode[] = [
+    { phase: 0, multiplier: 1 },
+    { phase: 0.3, multiplier: 4 },
+    { phase: 1, multiplier: 0.5 },
+  ];
+  for (const animMode of ['bounce', 'loop'] as const) {
+    const implicit = metaMultiplier({ speedMode: 'curve', curveNodes: nodes, loopSeam: 'hard', animMode });
+    const explicit = metaMultiplier({
+      speedMode: 'curve', curveNodes: nodes, loopSeam: 'hard', animMode, loopDirection: 'forward',
+    });
+    for (let i = 0; i <= 40; i++) assert.equal(implicit(i / 40), explicit(i / 40));
+  }
+  // Bounce with reverse stored: ignored, identical to plain bounce.
+  const plain = metaMultiplier({ speedMode: 'curve', curveNodes: nodes, loopSeam: 'hard', animMode: 'bounce' });
+  const stored = metaMultiplier({
+    speedMode: 'curve', curveNodes: nodes, loopSeam: 'hard', animMode: 'bounce', loopDirection: 'reverse',
+  });
+  for (let i = 0; i <= 40; i++) assert.equal(plain(i / 40), stored(i / 40));
+});
