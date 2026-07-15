@@ -422,22 +422,27 @@ test('oneWay: the return leg retraces the same curve in reverse', () => {
   assert.ok(Math.abs(oneWay(0.075) - 2) < 1e-12);
 });
 
-test('oneWay ignores the seam lock — anchors are speeds at min and max', () => {
+test('oneWay honors the seam lock: smooth pins speed-at-max to speed-at-min', () => {
   const nodes: CurveNode[] = [
     { phase: 0, multiplier: 1 },
-    { phase: 1, multiplier: 4 },
+    { phase: 1, multiplier: 4 }, // anchors deliberately unequal
   ];
-  // Even with loopSeam 'smooth' stored, the end anchor keeps its own value
-  // (4× at max) instead of being locked onto node 0.
-  const at = metaMultiplier({
+  // Hard: independent anchors — 4× at the max turnaround (position 1).
+  const hard = metaMultiplier({
     speedMode: 'flat',
     curveNodes: nodes,
-    loopSeam: 'smooth',
+    loopSeam: 'hard',
     graphSpan: 'oneWay',
   });
-  assert.ok(Math.abs(at(0.5) - 4) < 1e-12); // position 1 = max
-  // …and speed is continuous through the wrap by construction.
-  assert.ok(Math.abs(at(0.999) - at(0.001)) < 0.01);
+  assert.ok(Math.abs(hard(0.5) - 4) < 1e-12);
+  // Smooth (the default): the lock overrides the stored end anchor, so the
+  // speeds at min and max match.
+  const smooth = metaMultiplier({ speedMode: 'flat', curveNodes: nodes, graphSpan: 'oneWay' });
+  assert.ok(Math.abs(smooth(0.5) - 1) < 1e-12);
+  // Either way the wrap is speed-continuous under bounce (retrace reflects).
+  for (const at of [hard, smooth]) {
+    assert.ok(Math.abs(at(0.999) - at(0.001)) < 0.01);
+  }
 });
 
 test('graphSpan defaults to oneWay; roundTrip preserves M3 cycle semantics', () => {

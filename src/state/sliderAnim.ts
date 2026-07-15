@@ -323,9 +323,11 @@ export function metaMultiplier(meta: {
   }
   // oneWay: the curve's x-axis is value-position within min→max, so the
   // return leg reads the same curve in reverse through the triangle map.
-  // The anchors are speeds at min and max — independent by nature — so the
-  // seam lock never applies ('hard' endpoints); speed is automatically
-  // continuous at both turnarounds because the retrace reflects through them.
-  const at = prepareCurve(meta.curveNodes, 'hard', mode);
+  // Here the anchors are the speeds at min and max, and the seam is the
+  // lock between them: 'smooth' pins speed-at-max equal to speed-at-min
+  // (and is what keeps the M5 loop jump continuous), 'hard' leaves them
+  // independent. Under bounce both turnarounds are speed-continuous either
+  // way, because the retrace reflects through them.
+  const at = prepareCurve(meta.curveNodes, meta.loopSeam ?? 'smooth', mode);
   return (phase: number): number => at(trianglePosition(phase));
 }
