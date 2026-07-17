@@ -253,6 +253,23 @@ export function App(): JSX.Element {
   const togglePerfHud = useCallback((): void => {
     setShowPerfHud((on) => !on);
   }, []);
+
+  // Floating toast (M11): carries the File menu's status/error messages.
+  // Owned here, not by DocActions, so it renders over the canvas and
+  // outlives the dropdown's open/closed state.
+  const [toast, setToast] = useState<{ text: string; error: boolean } | null>(null);
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const flash = useCallback((text: string, error = false): void => {
+    setToast({ text, error });
+    if (toastTimer.current !== null) clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToast(null), error ? 6000 : 3000);
+  }, []);
+  useEffect(
+    () => () => {
+      if (toastTimer.current !== null) clearTimeout(toastTimer.current);
+    },
+    [],
+  );
   useEffect(() => {
     try {
       localStorage.setItem(PERF_HUD_KEY, showPerfHud ? 'on' : 'off');
@@ -994,12 +1011,6 @@ export function App(): JSX.Element {
             +
           </button>
         </div>
-        <DocActions
-          makeShareCode={makeShareCode}
-          openShareCode={openShareCode}
-          saveFile={saveFile}
-          openFile={openFile}
-        />
         <header className="sidebar-header">
           <h1 className="app-title">NOUS</h1>
           <div className="header-controls">
@@ -1045,6 +1056,13 @@ export function App(): JSX.Element {
                 <option value="accessible">Accessible</option>
               </select>
             </label>
+            <DocActions
+              makeShareCode={makeShareCode}
+              openShareCode={openShareCode}
+              saveFile={saveFile}
+              openFile={openFile}
+              flash={flash}
+            />
             <button
               type="button"
               className="shortcuts-button"
@@ -1111,7 +1129,14 @@ export function App(): JSX.Element {
           apiRef={graphApi}
           getExportName={activeTabName}
         />
-        <PerfHud hudRef={hudRef} toggle={toggle} manual={showPerfHud} />
+        <div className="canvas-overlays">
+          <PerfHud hudRef={hudRef} toggle={toggle} manual={showPerfHud} />
+          {toast && (
+            <div className={`app-toast${toast.error ? ' app-toast-error' : ''}`} role="status">
+              {toast.text}
+            </div>
+          )}
+        </div>
       </main>
       {shortcutsOpen && <ShortcutsPanel onClose={() => setShortcutsOpen(false)} />}
     </div>

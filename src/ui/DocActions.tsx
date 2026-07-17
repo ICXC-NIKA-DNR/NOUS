@@ -1,13 +1,18 @@
-// Document persistence actions (M8): share-code copy/import now, native
-// save/open joins in M8.2. Lives as its own row under the tab bar so the
-// header controls row doesn't crowd on narrow windows.
+// The "File" menu (M11): Save / Open / Copy share code / Paste share code,
+// collapsed from their own row into one dropdown in the header controls,
+// left of the ⌨ shortcuts button. This component is presentation only —
+// all behavior lives in ui/docMenu.ts (node:test-able); serialization stays
+// in state/serialize.ts and document creation in the workspace's
+// openDocument. Status messages go to App's floating toast via `flash`,
+// which outlives the menu.
 //
-// This component owns only presentation state (the paste panel, the transient
-// status note); all serialization goes through state/serialize.ts and all
-// document creation through the workspace's openDocument.
+// Deliberately independent of the CAS menu in ExpressionRow.tsx (M11
+// decision): same visual vocabulary, zero shared code — a change to either
+// menu must have no effect on the other. Unlike the CAS menu, this one
+// closes on outside click and Escape (added locally, on purpose).
 
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { NousFormatError } from '../state/serialize.ts';
+import { useEffect, useRef, useState } from 'react';
+import { DocMenuController, INITIAL_DOC_MENU, type DocMenuState } from './docMenu.ts';
 
 interface Props {
   /** Build the share code for the active document. */
@@ -20,121 +25,141 @@ interface Props {
   /** Open a .nous file as a new tab. Null when cancelled; throws
    * NousFormatError on malformed content. */
   openFile: () => Promise<string | null>;
+  /** Show a floating toast (App owns it; independent of menu state). */
+  flash: (text: string, error?: boolean) => void;
 }
 
-export function DocActions({ makeShareCode, openShareCode, saveFile, openFile }: Props): JSX.Element {
-  const [note, setNote] = useState<{ text: string; error: boolean } | null>(null);
-  const [pasteOpen, setPasteOpen] = useState(false);
-  const [pasteText, setPasteText] = useState('');
-  const noteTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+export function DocActions(props: Props): JSX.Element {
+  const [state, setState] = useState<DocMenuState>(INITIAL_DOC_MENU);
+  const propsRef = useRef(props);
+  propsRef.current = props;
+  const rootRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const pasteRef = useRef<HTMLTextAreaElement>(null);
 
-  const flash = useCallback((text: string, error = false): void => {
-    setNote({ text, error });
-    if (noteTimer.current !== null) clearTimeout(noteTimer.current);
-    noteTimer.current = setTimeout(() => setNote(null), error ? 6000 : 3000);
-  }, []);
-
-  useEffect(
-    () => () => {
-      if (noteTimer.current !== null) clearTimeout(noteTimer.current);
-    },
-    [],
-  );
-
-  const onCopy = useCallback((): void => {
-    const code = makeShareCode();
-    navigator.clipboard.writeText(code).then(
-      () => flash('Share code copied to clipboard'),
-      () => {
-        // Clipboard blocked (permissions/insecure context): surface the code
-        // in the paste panel so it can be copied by hand.
-        setPasteText(code);
-        setPasteOpen(true);
-        flash('Clipboard unavailable — copy the code below', true);
-      },
+  const ctrlRef = useRef<DocMenuController | null>(null);
+  if (ctrlRef.current === null) {
+    ctrlRef.current = new DocMenuController(
+      () => ({
+        ...propsRef.current,
+        writeClipboard: (text) => navigator.clipboard.writeText(text),
+      }),
+      setState,
     );
-  }, [makeShareCode, flash]);
+  }
+  const ctrl = ctrlRef.current;
 
-  const onImport = useCallback((): void => {
-    try {
-      openShareCode(pasteText);
-      setPasteText('');
-      setPasteOpen(false);
-      flash('Graph opened in a new tab');
-    } catch (err) {
-      // Pasted codes are untrusted input: surface EVERY failure in the flash
-      // area (matching onOpen), never rethrow — an unexpected error class
-      // must not escape the click handler as a silent uncaught exception.
-      flash(err instanceof Error ? err.message : String(err), true);
-    }
-  }, [openShareCode, pasteText, flash]);
+  // Close on outside click / Escape while open. Escape returns focus to the
+  // trigger; both routes go through closeMenu(), which resets the paste
+  // panel (closing is the cancel).
+  useEffect(() => {
+    if (!state.menuOpen) return;
+    const onPointerDown = (e: PointerEvent): void => {
+      if (rootRef.current && e.target instanceof Node && !rootRef.current.contains(e.target)) {
+        ctrl.closeMenu();
+      }
+    };
+    const onKeyDown = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') {
+        ctrl.closeMenu();
+        triggerRef.current?.focus();
+      }
+    };
+    document.addEventListener('pointerdown', onPointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [state.menuOpen, ctrl]);
 
-  const onSave = useCallback((): void => {
-    saveFile().then(
-      (name) => {
-        if (name !== null) flash(`Saved ${name}`);
-      },
-      (err) => flash(err instanceof Error ? err.message : String(err), true),
-    );
-  }, [saveFile, flash]);
-
-  const onOpen = useCallback((): void => {
-    openFile().then(
-      (name) => {
-        if (name !== null) flash(`Opened ${name}`);
-      },
-      (err) => {
-        if (err instanceof NousFormatError) return flash(err.message, true);
-        flash(err instanceof Error ? err.message : String(err), true);
-      },
-    );
-  }, [openFile, flash]);
+  // Focus + select the textarea when the paste panel opens — for the
+  // clipboard-blocked Copy fallback this is the code, ready to hand-copy.
+  useEffect(() => {
+    if (!state.pasteOpen) return;
+    pasteRef.current?.focus();
+    pasteRef.current?.select();
+  }, [state.pasteOpen]);
 
   return (
-    <div className="doc-actions">
-      <div className="doc-actions-row" role="group" aria-label="File and share">
-        <button type="button" title="Save this graph as a .nous file" onClick={onSave}>
-          Save
-        </button>
-        <button type="button" title="Open a .nous file" onClick={onOpen}>
-          Open
-        </button>
-        <button type="button" title="Copy a share code for this graph" onClick={onCopy}>
-          Copy share code
-        </button>
-        <button
-          type="button"
-          title="Open a graph from a pasted share code"
-          aria-expanded={pasteOpen}
-          onClick={() => setPasteOpen((open) => !open)}
-        >
-          Paste share code
-        </button>
-        {note && (
-          <span className={`doc-actions-note${note.error ? ' doc-actions-error' : ''}`} role="status">
-            {note.text}
-          </span>
-        )}
-      </div>
-      {pasteOpen && (
-        <div className="doc-actions-paste">
-          <textarea
-            className="share-input"
-            rows={3}
-            placeholder="Paste a share code…"
-            aria-label="Share code"
-            value={pasteText}
-            onChange={(e) => setPasteText(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                onImport();
-              }
-            }}
-          />
-          <button type="button" disabled={pasteText.trim() === ''} onClick={onImport}>
-            Open graph
+    <div className="file-menu" ref={rootRef}>
+      <button
+        type="button"
+        ref={triggerRef}
+        className="file-menu-button"
+        title="Save, open, and share this graph"
+        aria-haspopup="menu"
+        aria-expanded={state.menuOpen}
+        onClick={() => ctrl.toggleMenu()}
+      >
+        File
+      </button>
+      {state.menuOpen && (
+        <div className="file-menu-panel" role="menu" aria-label="File and share">
+          <button
+            type="button"
+            role="menuitem"
+            title="Save this graph as a .nous file"
+            onClick={() => void ctrl.save()}
+          >
+            Save
           </button>
+          <button
+            type="button"
+            role="menuitem"
+            title="Open a .nous file"
+            onClick={() => void ctrl.open()}
+          >
+            Open
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            title="Copy a share code for this graph"
+            onClick={() => void ctrl.copy()}
+          >
+            Copy share code
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            title="Open a graph from a pasted share code"
+            aria-expanded={state.pasteOpen}
+            onClick={() => ctrl.togglePaste()}
+          >
+            Paste share code
+          </button>
+          {state.pasteOpen && (
+            <div className="file-menu-paste">
+              <textarea
+                ref={pasteRef}
+                className="share-input"
+                rows={3}
+                placeholder="Paste a share code…"
+                aria-label="Share code"
+                value={state.pasteText}
+                onChange={(e) => ctrl.setPasteText(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    ctrl.submitPaste();
+                  }
+                }}
+              />
+              <div className="file-menu-paste-actions">
+                <button
+                  type="button"
+                  disabled={state.pasteText.trim() === ''}
+                  onClick={() => ctrl.submitPaste()}
+                >
+                  Open graph
+                </button>
+                <button type="button" onClick={() => ctrl.cancelPaste()}>
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>

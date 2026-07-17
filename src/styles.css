@@ -159,22 +159,98 @@ body {
   border-color: var(--text-dim);
 }
 
-.doc-actions {
+/* File menu (M11): Save/Open/share-code actions, collapsed from their own
+   row into one dropdown in the header controls. Independent of .cas-menu by
+   decision — the lookalike rules are duplicated on purpose so the two menus
+   can evolve separately. */
+.file-menu {
+  /* NOT position:relative — the panel anchors to .sidebar-header instead,
+     so it drops below the whole header row, right-aligned inside the
+     sidebar. Anchoring to this 40px trigger clipped the panel off the
+     sidebar's left edge whenever the header controls wrapped. */
+  flex: none;
+}
+
+.file-menu-button {
+  background: transparent;
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1;
+  padding: 3px 8px;
+  cursor: pointer;
+}
+
+.file-menu-button:hover,
+.file-menu-button[aria-expanded='true'] {
+  color: var(--text);
+  border-color: var(--text-dim);
+}
+
+.file-menu-panel {
+  position: absolute;
+  right: 8px;
+  top: calc(100% + 4px);
+  z-index: 30;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+  display: flex;
+  flex-direction: column;
+  min-width: 170px;
+  padding: 4px 0;
+}
+
+.file-menu-panel > button {
+  background: transparent;
+  border: none;
+  color: var(--text);
+  font: inherit;
+  font-size: 12.5px;
+  text-align: left;
+  padding: 6px 10px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.file-menu-panel > button:hover {
+  background: var(--bg-input);
+  color: var(--accent);
+}
+
+.file-menu-paste {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--border);
+  width: 240px;
+  margin-top: 4px;
+  padding: 8px 10px;
+  border-top: 1px solid var(--border);
 }
 
-.doc-actions-row {
+.share-input {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  background: var(--bg-input);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font: inherit;
+  font-size: 12px;
+  padding: 6px 8px;
+}
+
+.file-menu-paste-actions {
   display: flex;
-  align-items: center;
   gap: 8px;
-  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
-.doc-actions button {
+.file-menu-paste-actions button {
   background: transparent;
   color: var(--text-dim);
   border: 1px solid var(--border);
@@ -186,42 +262,14 @@ body {
   cursor: pointer;
 }
 
-.doc-actions button:hover:not(:disabled) {
+.file-menu-paste-actions button:hover:not(:disabled) {
   background: var(--bg-input);
   color: var(--text);
 }
 
-.doc-actions button:disabled {
+.file-menu-paste-actions button:disabled {
   opacity: 0.35;
   cursor: default;
-}
-
-.doc-actions-note {
-  font-size: 12px;
-  color: var(--text-dim);
-}
-
-.doc-actions-error {
-  color: var(--error);
-}
-
-.doc-actions-paste {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-}
-
-.share-input {
-  flex: 1;
-  min-width: 0;
-  resize: vertical;
-  background: var(--bg-input);
-  color: var(--text);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  font: inherit;
-  font-size: 12px;
-  padding: 6px 8px;
 }
 
 .shortcuts-button {
@@ -379,6 +427,7 @@ body {
 }
 
 .sidebar-header {
+  position: relative; /* anchors .file-menu-panel below the header row */
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1025,10 +1074,41 @@ body {
 
 /* ---------------- perf HUD (dev, ?perf=N) ---------------- */
 
-.perf-hud {
+/* Top-left overlay stack (M11): the perf HUD and the floating toast share
+   one column so the toast sits under the HUD when it's on and takes its
+   place when it's off. */
+.canvas-overlays {
   position: absolute;
   top: 10px;
   left: 10px;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  /* The stack itself must not block canvas drags; interactive children
+     (the HUD's button) re-enable pointer events below. */
+  pointer-events: none;
+}
+
+.app-toast {
+  background: rgba(27, 29, 33, 0.88);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 12px;
+  color: var(--text);
+  max-width: 340px;
+}
+
+.app-toast-error {
+  color: var(--error);
+  border-color: var(--error);
+}
+
+.perf-hud {
+  /* positioned by .canvas-overlays */
+  pointer-events: auto;
   background: rgba(27, 29, 33, 0.88);
   border: 1px solid var(--border);
   border-radius: 6px;
@@ -1059,7 +1139,7 @@ body {
 .canvas-area {
   flex: 1;
   min-width: 0;
-  position: relative; /* anchors .perf-hud */
+  position: relative; /* anchors .canvas-overlays */
 }
 
 .graph-container {
